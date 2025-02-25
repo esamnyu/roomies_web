@@ -147,7 +147,7 @@ export async function PATCH(
     } = data;
     
     // Update the expense
-    const updatedExpense = await prisma.$transaction(async (prisma) => {
+    const updatedExpense = await prisma.$transaction(async (prisma: { expense: { update: (arg0: { where: { id: string; }; data: { title: any; amount: any; date: Date | undefined; description: any; splitType: any; }; }) => any; findUnique: (arg0: { where: { id: string; }; include: { creator: { select: { id: boolean; name: boolean; email: boolean; avatar: boolean; }; }; splits: { include: { user: { select: { id: boolean; name: boolean; email: boolean; avatar: boolean; }; }; }; }; payments: { include: { user: { select: { id: boolean; name: boolean; email: boolean; avatar: boolean; }; }; }; }; }; }) => any; }; expenseSplit: { deleteMany: (arg0: { where: { expenseId: string; }; }) => any; createMany: (arg0: { data: any; }) => any; }; payment: { upsert: (arg0: { where: { id: any; }; update: { amount: any; status: any; date: Date | null; }; create: { expenseId: string; userId: any; amount: any; status: any; date: Date | null; }; }) => any; }; }) => {
       // Update the base expense
       const expense = await prisma.expense.update({
         where: {
