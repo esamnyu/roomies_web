@@ -3,7 +3,8 @@
 
 import { useState, useEffect } from 'react';
 import TaskForm from '@/components/tasks/TaskForm';
-import TaskList, { Task } from '@/components/tasks/TaskList';
+import TaskList from '@/components/tasks/TaskList'; // Fixed casing to match your actual file
+import type { Task } from '@/components/tasks/TaskList'; // Import the Task type from your actual file
 
 // Mock data for development
 const MOCK_TASKS: Task[] = [
@@ -107,7 +108,7 @@ const MOCK_MEMBERS = [
 ];
 
 export default function TasksPage() {
-  const [tasks, setTasks] = useState(MOCK_TASKS);
+  const [tasks, setTasks] = useState<Task[]>(MOCK_TASKS);
   const [showTaskForm, setShowTaskForm] = useState(false);
   const [currentTask, setCurrentTask] = useState<Task | null>(null);
   const [filter, setFilter] = useState<'ALL' | 'MY_TASKS' | 'MY_CREATED' | 'PENDING' | 'COMPLETED'>('ALL');
@@ -150,17 +151,23 @@ export default function TasksPage() {
     return dateA.getTime() - dateB.getTime();
   });
   
-  const handleAddTask = (newTask: Omit<Task, 'id' | 'creatorName' | 'assigneeName'>) => {
+  // Type for the new task with optional id to match your components
+  type NewTask = Omit<Task, 'id'> & { id?: string };
+  
+  const handleAddTask = (newTask: NewTask) => {
     // Generate a simple ID - in a real app this would come from the backend
     const id = (tasks.length + 1).toString();
     
+    // Find the assignee name from members list
+    const assigneeName = MOCK_MEMBERS.find(m => m.id === newTask.assigneeId)?.name || '';
+    
     // In a real app, you would send this data to your API
-    const taskToAdd = {
+    const taskToAdd: Task = {
       ...newTask,
-      id,
+      id, // Ensure id is provided
       creatorId: currentUserId,
       creatorName: MOCK_MEMBERS.find(m => m.id === currentUserId)?.name || '',
-      assigneeName: MOCK_MEMBERS.find(m => m.id === newTask.assigneeId)?.name || '',
+      assigneeName,
     };
     
     setTasks([...tasks, taskToAdd]);
@@ -173,11 +180,19 @@ export default function TasksPage() {
     setShowTaskForm(true);
   };
   
-  const handleUpdateTask = (updatedTask: Task) => {
-    // In a real app, you would send this data to your API
+// Update your handleUpdateTask function to accept both Task and NewTask
+const handleUpdateTask = (updatedTask: Task | NewTask) => {
+    // Make sure updatedTask has an id (it must have one since it's being edited)
+    if (!updatedTask.id) {
+      console.error("Task ID is missing");
+      return;
+    }
+  
+    // Continue with your existing code
     const updatedTasks = tasks.map(task => 
       task.id === updatedTask.id ? {
         ...updatedTask,
+        id: updatedTask.id, // Explicitly assign id to satisfy TypeScript
         assigneeName: MOCK_MEMBERS.find(m => m.id === updatedTask.assigneeId)?.name || ''
       } : task
     );
@@ -197,8 +212,10 @@ export default function TasksPage() {
     // In a real app, you would send this request to your API
     const updatedTasks = tasks.map(task => {
       if (task.id === taskId) {
-        const updatedTask = { ...task, status: newStatus };
-        if (newStatus === 'COMPLETED') {
+        // Ensure newStatus is properly typed 
+        const status = newStatus as Task['status'];
+        const updatedTask = { ...task, status };
+        if (status === 'COMPLETED') {
           updatedTask.completedAt = new Date();
         } else {
           updatedTask.completedAt = undefined;

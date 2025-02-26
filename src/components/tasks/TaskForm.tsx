@@ -2,6 +2,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import type { Task } from '@/components/tasks/TaskList'; // Import the same Task type
 
 interface Member {
   id: string;
@@ -9,27 +10,14 @@ interface Member {
   avatar?: string;
 }
 
-interface Task {
-  id?: string;
-  title: string;
-  description?: string;
-  status: 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'SKIPPED';
-  priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
-  creatorId: string;
-  creatorName?: string;
-  assigneeId?: string;
-  assigneeName?: string;
-  dueDate?: Date | string;
-  recurring: boolean;
-  recurrenceRule?: string;
-  householdId: string;
-  completedAt?: Date;
-}
+// Define a NewTask type that can be used for creation (without id)
+type NewTask = Omit<Task, 'id'> & { id?: string };
 
 interface TaskFormProps {
   task?: Task | null;
   members: Member[];
-  onSubmit: (task: Task) => void;
+  // Update this to accept both Task and NewTask types
+  onSubmit: (task: Task | NewTask) => void;
   onCancel: () => void;
 }
 
@@ -52,7 +40,7 @@ export default function TaskForm({ task, members, onSubmit, onCancel }: TaskForm
     householdId: '1', // Assuming we have a single household for now
   };
 
-  const [formData, setFormData] = useState<Omit<Task, 'dueDate'> & { dueDate: string }>(defaultState);
+  const [formData, setFormData] = useState<Omit<Task, 'id' | 'dueDate'> & { id?: string, dueDate: string }>(defaultState);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   // Initialize form data when task prop changes
@@ -111,10 +99,12 @@ export default function TaskForm({ task, members, onSubmit, onCancel }: TaskForm
     }
     
     // Submit the task
-    onSubmit({
+    const submittedTask = {
       ...formData,
       dueDate: formData.dueDate ? new Date(formData.dueDate) : undefined, // Convert string back to Date
-    });
+    };
+    
+    onSubmit(submittedTask);
   };
 
   return (
