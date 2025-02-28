@@ -1,6 +1,6 @@
 // src/app/api/expenses/[id]/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { supabase } from '@/lib/supabase';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/app/api/auth/[...nextauth]/route';
 
@@ -19,67 +19,38 @@ export async function GET(
     const expenseId = params.id;
     
     // Get the expense
-    const expense = await prisma.expense.findUnique({
-      where: {
-        id: expenseId,
-      },
-      include: {
-        creator: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            avatar: true,
-          },
-        },
-        household: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-        splits: {
-          include: {
-            user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                avatar: true,
-              },
-            },
-          },
-        },
-        payments: {
-          include: {
-            user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                avatar: true,
-              },
-            },
-          },
-        },
-      },
-    });
+    const { data: expense, error: expenseError } = await supabase
+      .from('Expense')
+      .select(`
+        *,
+        creator:creatorId(id, name, email, avatar),
+        household:householdId(id, name),
+        splits:ExpenseSplit(
+          *,
+          user:userId(id, name, email, avatar)
+        ),
+        payments:Payment(
+          *,
+          user:userId(id, name, email, avatar)
+        )
+      `)
+      .eq('id', expenseId)
+      .single();
     
-    if (!expense) {
+    if (expenseError || !expense) {
+      console.error('Error fetching expense:', expenseError);
       return NextResponse.json({ error: 'Expense not found' }, { status: 404 });
     }
     
     // Check if the user is a member of the household that the expense belongs to
-    const householdUser = await prisma.householdUser.findUnique({
-      where: {
-        userId_householdId: {
-          userId: session.user.id,
-          householdId: expense.householdId,
-        },
-      },
-    });
+    const { data: householdUser, error: membershipError } = await supabase
+      .from('HouseholdUser')
+      .select('userId, householdId, role')
+      .eq('userId', session.user.id)
+      .eq('householdId', expense.householdId)
+      .single();
     
-    if (!householdUser) {
+    if (membershipError || !householdUser) {
       return NextResponse.json({ error: 'You are not a member of this household' }, { status: 403 });
     }
     
@@ -106,13 +77,13 @@ export async function PATCH(
     const data = await request.json();
     
     // Get the current expense to verify permissions
-    const currentExpense = await prisma.expense.findUnique({
-      where: {
-        id: expenseId,
-      },
-    });
+    const { data: currentExpense, error: expenseError } = await supabase
+      .from('Expense')
+      .select('id, creatorId, householdId')
+      .eq('id', expenseId)
+      .single();
     
-    if (!currentExpense) {
+    if (expenseError || !currentExpense) {
       return NextResponse.json({ error: 'Expense not found' }, { status: 404 });
     }
     
@@ -122,16 +93,14 @@ export async function PATCH(
     }
     
     // Check if the user is a member of the household
-    const householdUser = await prisma.householdUser.findUnique({
-      where: {
-        userId_householdId: {
-          userId: session.user.id,
-          householdId: currentExpense.householdId,
-        },
-      },
-    });
+    const { data: householdUser, error: membershipError } = await supabase
+      .from('HouseholdUser')
+      .select('userId, householdId, role')
+      .eq('userId', session.user.id)
+      .eq('householdId', currentExpense.householdId)
+      .single();
     
-    if (!householdUser) {
+    if (membershipError || !householdUser) {
       return NextResponse.json({ error: 'You are not a member of this household' }, { status: 403 });
     }
     
@@ -146,107 +115,124 @@ export async function PATCH(
       payments
     } = data;
     
-    // Update the expense
-    const updatedExpense = await prisma.$transaction(async (prisma: { expense: { update: (arg0: { where: { id: string; }; data: { title: any; amount: any; date: Date | undefined; description: any; splitType: any; }; }) => any; findUnique: (arg0: { where: { id: string; }; include: { creator: { select: { id: boolean; name: boolean; email: boolean; avatar: boolean; }; }; splits: { include: { user: { select: { id: boolean; name: boolean; email: boolean; avatar: boolean; }; }; }; }; payments: { include: { user: { select: { id: boolean; name: boolean; email: boolean; avatar: boolean; }; }; }; }; }; }) => any; }; expenseSplit: { deleteMany: (arg0: { where: { expenseId: string; }; }) => any; createMany: (arg0: { data: any; }) => any; }; payment: { upsert: (arg0: { where: { id: any; }; update: { amount: any; status: any; date: Date | null; }; create: { expenseId: string; userId: any; amount: any; status: any; date: Date | null; }; }) => any; }; }) => {
-      // Update the base expense
-      const expense = await prisma.expense.update({
-        where: {
-          id: expenseId,
-        },
-        data: {
-          title,
-          amount,
-          date: date ? new Date(date) : undefined,
-          description,
-          splitType,
-        },
-      });
+    // Update the expense - Note: Supabase doesn't have built-in transactions like Prisma
+    // so we'll have to handle each part separately
+    
+    // 1. Update the base expense
+    const { error: updateError } = await supabase
+      .from('Expense')
+      .update({
+        title,
+        amount,
+        date: date ? new Date(date).toISOString() : undefined,
+        description,
+        splitType,
+        updatedAt: new Date().toISOString()
+      })
+      .eq('id', expenseId);
+    
+    if (updateError) {
+      console.error('Error updating expense:', updateError);
+      return NextResponse.json({ error: 'Failed to update expense' }, { status: 500 });
+    }
+    
+    // 2. If splits are provided, update them
+    if (splits && splits.length > 0) {
+      // Delete existing splits
+      const { error: deleteError } = await supabase
+        .from('ExpenseSplit')
+        .delete()
+        .eq('expenseId', expenseId);
       
-      // If splits are provided, update them
-      if (splits && splits.length > 0) {
-        // Delete existing splits
-        await prisma.expenseSplit.deleteMany({
-          where: {
-            expenseId,
-          },
-        });
-        
-        // Create new splits
-        await prisma.expenseSplit.createMany({
-          data: splits.map((split: any) => ({
-            expenseId,
-            userId: split.userId,
-            amount: split.amount,
-            percentage: split.percentage || null,
-          })),
-        });
+      if (deleteError) {
+        console.error('Error deleting existing splits:', deleteError);
+        return NextResponse.json({ error: 'Failed to update expense splits' }, { status: 500 });
       }
       
-      // If payments are provided, update them
-      if (payments && payments.length > 0) {
-        // Handle each payment individually to preserve status
-        for (const payment of payments) {
-          await prisma.payment.upsert({
-            where: {
-              id: payment.id || 'new-payment', // Use a placeholder if new
-            },
-            update: {
+      // Create new splits
+      const splitsData = splits.map((split: any) => ({
+        expenseId,
+        userId: split.userId,
+        amount: split.amount,
+        percentage: split.percentage || null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }));
+      
+      const { error: insertError } = await supabase
+        .from('ExpenseSplit')
+        .insert(splitsData);
+      
+      if (insertError) {
+        console.error('Error creating new splits:', insertError);
+        return NextResponse.json({ error: 'Failed to update expense splits' }, { status: 500 });
+      }
+    }
+    
+    // 3. If payments are provided, update them
+    if (payments && payments.length > 0) {
+      // Handle each payment individually
+      for (const payment of payments) {
+        if (payment.id && payment.id !== 'new-payment') {
+          // Update existing payment
+          const { error: paymentUpdateError } = await supabase
+            .from('Payment')
+            .update({
               amount: payment.amount,
               status: payment.status,
-              date: payment.status === 'COMPLETED' ? new Date() : null,
-            },
-            create: {
+              date: payment.status === 'COMPLETED' ? new Date().toISOString() : null,
+              updatedAt: new Date().toISOString()
+            })
+            .eq('id', payment.id);
+          
+          if (paymentUpdateError) {
+            console.error('Error updating payment:', paymentUpdateError);
+            // Continue with other payments rather than failing the whole request
+          }
+        } else {
+          // Create new payment
+          const { error: paymentCreateError } = await supabase
+            .from('Payment')
+            .insert({
               expenseId,
               userId: payment.userId,
               amount: payment.amount,
               status: payment.status,
-              date: payment.status === 'COMPLETED' ? new Date() : null,
-            },
-          });
+              date: payment.status === 'COMPLETED' ? new Date().toISOString() : null,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            });
+          
+          if (paymentCreateError) {
+            console.error('Error creating payment:', paymentCreateError);
+            // Continue with other payments rather than failing the whole request
+          }
         }
       }
-      
-      // Return the updated expense with all relations
-      return prisma.expense.findUnique({
-        where: {
-          id: expenseId,
-        },
-        include: {
-          creator: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-              avatar: true,
-            },
-          },
-          splits: {
-            include: {
-              user: {
-                select: {
-                  id: true,
-                  name: true,
-                  email: true,
-                  avatar: true,
-                },
-              },
-            },
-          },
-          payments: {
-            include: {
-              user: {
-                select: {
-                  id: true,
-                  name: true,
-                  email: true,
-                  avatar: true,
-                },
-              },
-            },
-          },
-        },
-      });
-    });
+    }
+    
+    // 4. Get the updated expense with all relations
+    const { data: updatedExpense, error: fetchError } = await supabase
+      .from('Expense')
+      .select(`
+        *,
+        creator:creatorId(id, name, email, avatar),
+        splits:ExpenseSplit(
+          *,
+          user:userId(id, name, email, avatar)
+        ),
+        payments:Payment(
+          *,
+          user:userId(id, name, email, avatar)
+        )
+      `)
+      .eq('id', expenseId)
+      .single();
+    
+    if (fetchError) {
+      console.error('Error fetching updated expense:', fetchError);
+      return NextResponse.json({ error: 'Expense updated but failed to fetch updated data' }, { status: 500 });
+    }
     
     return NextResponse.json(updatedExpense);
   } catch (error) {
@@ -270,25 +256,23 @@ export async function DELETE(
     const expenseId = params.id;
     
     // Get the current expense to verify permissions
-    const expense = await prisma.expense.findUnique({
-      where: {
-        id: expenseId,
-      },
-    });
+    const { data: expense, error: expenseError } = await supabase
+      .from('Expense')
+      .select('id, creatorId, householdId')
+      .eq('id', expenseId)
+      .single();
     
-    if (!expense) {
+    if (expenseError || !expense) {
       return NextResponse.json({ error: 'Expense not found' }, { status: 404 });
     }
     
     // Check if the user is the creator or an admin of the household
-    const householdUser = await prisma.householdUser.findUnique({
-      where: {
-        userId_householdId: {
-          userId: session.user.id,
-          householdId: expense.householdId,
-        },
-      },
-    });
+    const { data: householdUser, error: membershipError } = await supabase
+      .from('HouseholdUser')
+      .select('userId, householdId, role')
+      .eq('userId', session.user.id)
+      .eq('householdId', expense.householdId)
+      .single();
     
     const isCreator = expense.creatorId === session.user.id;
     const isAdmin = householdUser?.role === 'ADMIN';
@@ -297,12 +281,41 @@ export async function DELETE(
       return NextResponse.json({ error: 'You are not authorized to delete this expense' }, { status: 403 });
     }
     
-    // Delete the expense (cascade will handle related records)
-    await prisma.expense.delete({
-      where: {
-        id: expenseId,
-      },
-    });
+    // In Supabase, we have to delete related records manually 
+    // unless we've set up ON DELETE CASCADE foreign key constraints
+    
+    // 1. Delete related payments
+    const { error: paymentsError } = await supabase
+      .from('Payment')
+      .delete()
+      .eq('expenseId', expenseId);
+    
+    if (paymentsError) {
+      console.error('Error deleting related payments:', paymentsError);
+      // Continue anyway to try to delete the expense
+    }
+    
+    // 2. Delete related splits
+    const { error: splitsError } = await supabase
+      .from('ExpenseSplit')
+      .delete()
+      .eq('expenseId', expenseId);
+    
+    if (splitsError) {
+      console.error('Error deleting related splits:', splitsError);
+      // Continue anyway to try to delete the expense
+    }
+    
+    // 3. Delete the expense itself
+    const { error: deleteError } = await supabase
+      .from('Expense')
+      .delete()
+      .eq('id', expenseId);
+    
+    if (deleteError) {
+      console.error('Error deleting expense:', deleteError);
+      return NextResponse.json({ error: 'Failed to delete expense' }, { status: 500 });
+    }
     
     return NextResponse.json({ message: 'Expense deleted successfully' });
   } catch (error) {
