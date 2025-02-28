@@ -1,6 +1,6 @@
 // src/app/api/auth/register/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { supabase } from '@/lib/supabase';
 import bcrypt from 'bcrypt';
 
 export async function POST(request: NextRequest) {
@@ -16,9 +16,19 @@ export async function POST(request: NextRequest) {
     }
 
     // Check if user already exists
-    const existingUser = await prisma.user.findUnique({
-      where: { email },
-    });
+    const { data: existingUser, error: checkError } = await supabase
+      .from('User')
+      .select('id')
+      .eq('email', email)
+      .single();
+
+    if (checkError && checkError.code !== 'PGRST116') { // PGRST116 is "no rows returned" error
+      console.error('Error checking existing user:', checkError);
+      return NextResponse.json(
+        { message: 'Error checking user existence' },
+        { status: 500 }
+      );
+    }
 
     if (existingUser) {
       return NextResponse.json(
@@ -31,26 +41,34 @@ export async function POST(request: NextRequest) {
     const saltRounds = 10;
     const hashedPassword = await bcrypt.hash(password, saltRounds);
 
-    // Create the user
-    const user = await prisma.user.create({
-      data: {
-        name,
-        email,
-        password: hashedPassword,
-      },
-    });
+    // Create the user in Supabase
+    const { data: newUser, error: insertError } = await supabase
+      .from('User')
+      .insert([
+        {
+          name,
+          email,
+          password: hashedPassword,
+        }
+      ])
+      .select('id, name, email, avatar, createdAt, updatedAt')
+      .single();
 
-    // Return the user without the password
-    const { password: _, ...userWithoutPassword } = user;
-    
+    if (insertError) {
+      console.error('Error creating user:', insertError);
+      return NextResponse.json(
+        { message: 'Error creating user' },
+        { status: 500 }
+      );
+    }
+
     return NextResponse.json(
-      { 
+      {
         message: 'User registered successfully',
-        user: userWithoutPassword
+        user: newUser
       },
       { status: 201 }
     );
-    
   } catch (error) {
     console.error('Registration error:', error);
     return NextResponse.json(

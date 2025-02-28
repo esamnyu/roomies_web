@@ -2,7 +2,7 @@
 import { NextAuthOptions } from "next-auth";
 import NextAuth from "next-auth/next";
 import CredentialsProvider from "next-auth/providers/credentials";
-import { prisma } from "@/lib/prisma";
+import { supabase } from "@/lib/supabase";
 import bcrypt from "bcrypt";
 
 // Add custom types for NextAuth
@@ -13,7 +13,6 @@ declare module "next-auth" {
     email: string;
     image?: string | null;
   }
-
   interface Session {
     user: {
       id: string;
@@ -31,7 +30,6 @@ declare module "next-auth/jwt" {
 }
 
 export const authOptions: NextAuthOptions = {
-  // Remove the PrismaAdapter for now due to compatibility issues
   providers: [
     CredentialsProvider({
       name: "credentials",
@@ -43,14 +41,16 @@ export const authOptions: NextAuthOptions = {
         if (!credentials?.email || !credentials?.password) {
           return null;
         }
+        
+        // Query Supabase for the user with the provided email
+        const { data: user, error } = await supabase
+          .from('User')
+          .select('id, email, name, password, avatar')
+          .eq('email', credentials.email)
+          .single();
 
-        const user = await prisma.user.findUnique({
-          where: {
-            email: credentials.email
-          }
-        });
-
-        if (!user) {
+        if (error || !user) {
+          console.error("User lookup error:", error?.message);
           return null;
         }
 

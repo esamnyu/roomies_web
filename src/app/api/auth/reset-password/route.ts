@@ -1,6 +1,6 @@
 // src/app/api/auth/reset-password/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { supabase } from '@/lib/supabase';
 import bcrypt from 'bcrypt';
 
 export async function POST(request: NextRequest) {
@@ -23,43 +23,44 @@ export async function POST(request: NextRequest) {
     }
 
     // In a real application, you would verify the token against your database
-    // Here we're simulating token verification
-    
-    // For example:
+    // Here's how you might do that with a PasswordReset table in Supabase:
     /*
-    const resetRequest = await prisma.passwordReset.findUnique({
-      where: { token },
-    });
+    const { data: resetRequest, error: tokenError } = await supabase
+      .from('PasswordReset')
+      .select('email, expires')
+      .eq('token', token)
+      .single();
 
-    if (!resetRequest) {
+    if (tokenError || !resetRequest) {
       return NextResponse.json(
         { message: 'Invalid or expired token' },
         { status: 400 }
       );
     }
 
-    if (new Date() > resetRequest.expires) {
+    if (new Date() > new Date(resetRequest.expires)) {
       return NextResponse.json(
         { message: 'Token has expired' },
         { status: 400 }
       );
     }
 
-    const user = await prisma.user.findUnique({
-      where: { email: resetRequest.email },
-    });
+    const email = resetRequest.email;
     */
-    
+
     // IMPORTANT: This is for demonstration only
     // In a real app, you would find the user based on the validated token
     // For this demo, let's assume the token is valid and we know the email
     const email = "demo@example.com"; // In a real app, this would come from the validated token
     
-    const user = await prisma.user.findUnique({
-      where: { email },
-    });
+    // Find the user with the email
+    const { data: user, error: userError } = await supabase
+      .from('User')
+      .select('id')
+      .eq('email', email)
+      .single();
 
-    if (!user) {
+    if (userError || !user) {
       // For security, use the same message even if the user doesn't exist
       return NextResponse.json(
         { message: 'Password reset successful' },
@@ -72,13 +73,34 @@ export async function POST(request: NextRequest) {
     const hashedPassword = await bcrypt.hash(password, saltRounds);
 
     // Update the user's password
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { password: hashedPassword },
-    });
+    const { error: updateError } = await supabase
+      .from('User')
+      .update({ 
+        password: hashedPassword,
+        updatedAt: new Date().toISOString()
+      })
+      .eq('id', user.id);
+
+    if (updateError) {
+      console.error('Error updating password:', updateError);
+      return NextResponse.json(
+        { message: 'An error occurred while resetting your password' },
+        { status: 500 }
+      );
+    }
 
     // In a real app, you would also delete the used token
-    // await prisma.passwordReset.delete({ where: { token } });
+    /*
+    const { error: deleteError } = await supabase
+      .from('PasswordReset')
+      .delete()
+      .eq('token', token);
+    
+    if (deleteError) {
+      console.error('Error deleting used token:', deleteError);
+      // Not returning an error to the client as the password reset was successful
+    }
+    */
 
     return NextResponse.json(
       { message: 'Password reset successful' },
