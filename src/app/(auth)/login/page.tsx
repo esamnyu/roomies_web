@@ -2,10 +2,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { signIn, useSession } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import Image from 'next/image';
+import { useAuth } from '@/app/providers/AuthProvider';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -13,19 +12,18 @@ export default function LoginPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const router = useRouter();
-  const { data: session, status } = useSession();
   const searchParams = useSearchParams();
   const callbackUrl = searchParams.get('callbackUrl') || '/dashboard';
-  
-  // Check if user just registered
   const justRegistered = searchParams.get('registered') === 'true';
+  
+  const { user, isLoading, signIn } = useAuth();
   
   // Redirect if already authenticated
   useEffect(() => {
-    if (status === 'authenticated') {
+    if (user && !isLoading) {
       router.push(callbackUrl);
     }
-  }, [status, router, callbackUrl]);
+  }, [user, isLoading, router, callbackUrl]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -33,14 +31,10 @@ export default function LoginPage() {
     setError('');
 
     try {
-      const result = await signIn('credentials', {
-        email,
-        password,
-        redirect: false,
-      });
+      const result = await signIn(email, password);
 
       if (result?.error) {
-        setError('Invalid email or password');
+        setError(result.error);
         setLoading(false);
         return;
       }
@@ -53,7 +47,7 @@ export default function LoginPage() {
   };
 
   // If still checking auth status, show loading
-  if (status === 'loading') {
+  if (isLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
@@ -63,6 +57,7 @@ export default function LoginPage() {
 
   return (
     <div className="flex min-h-screen items-center justify-center py-12 px-4 sm:px-6 lg:px-8 bg-gray-50 dark:bg-gray-900">
+      {/* Rest of your login form remains the same */}
       <div className="w-full max-w-md space-y-8">
         <div>
           <div className="flex justify-center">
@@ -114,6 +109,7 @@ export default function LoginPage() {
         )}
         
         <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
+          {/* Form contents remain the same */}
           <div className="-space-y-px rounded-md shadow-sm">
             <div>
               <label htmlFor="email-address" className="sr-only">
