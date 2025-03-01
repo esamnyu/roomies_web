@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import bcrypt from 'bcrypt';
+import { v4 as uuidv4 } from 'uuid'; // Add UUID generation
 
 export async function POST(request: NextRequest) {
   try {
@@ -15,14 +16,21 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (password.length < 8) {
+      return NextResponse.json(
+        { message: 'Password must be at least 8 characters long' },
+        { status: 400 }
+      );
+    }
+
     // Check if user already exists
     const { data: existingUser, error: checkError } = await supabase
       .from('User')
       .select('id')
       .eq('email', email)
-      .single();
+      .maybeSingle();
 
-    if (checkError && checkError.code !== 'PGRST116') { // PGRST116 is "no rows returned" error
+    if (checkError) {
       console.error('Error checking existing user:', checkError);
       return NextResponse.json(
         { message: 'Error checking user existence' },
@@ -41,14 +49,20 @@ export async function POST(request: NextRequest) {
     const saltRounds = 10;
     const hashedPassword = await bcrypt.hash(password, saltRounds);
 
+    // Generate a unique ID for the user (to match Prisma's cuid() behavior)
+    const userId = uuidv4();
+    
     // Create the user in Supabase
     const { data: newUser, error: insertError } = await supabase
       .from('User')
       .insert([
         {
+          id: userId, // Explicitly provide the ID
           name,
           email,
           password: hashedPassword,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
         }
       ])
       .select('id, name, email, avatar, createdAt, updatedAt')

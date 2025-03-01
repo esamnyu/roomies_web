@@ -42,47 +42,57 @@ export const authOptions: NextAuthOptions = {
           return null;
         }
         
-        // Query Supabase for the user with the provided email
-        const { data: user, error } = await supabase
-          .from('User')
-          .select('id, email, name, password, avatar')
-          .eq('email', credentials.email)
-          .single();
+        try {
+          // Query Supabase for the user with the provided email
+          const { data: user, error } = await supabase
+            .from('User')
+            .select('id, email, name, password, avatar')
+            .eq('email', credentials.email)
+            .single();
 
-        if (error || !user) {
-          console.error("User lookup error:", error?.message);
+          if (error || !user) {
+            console.error("User lookup error:", error?.message);
+            return null;
+          }
+
+          // Verify the password
+          const passwordMatch = await bcrypt.compare(
+            credentials.password,
+            user.password
+          );
+
+          if (!passwordMatch) {
+            return null;
+          }
+
+          // Return the user data without sensitive information
+          return {
+            id: user.id,
+            email: user.email,
+            name: user.name,
+            image: user.avatar || null,
+          };
+        } catch (error) {
+          console.error("Authentication error:", error);
           return null;
         }
-
-        const passwordMatch = await bcrypt.compare(
-          credentials.password,
-          user.password
-        );
-
-        if (!passwordMatch) {
-          return null;
-        }
-
-        return {
-          id: user.id,
-          email: user.email,
-          name: user.name,
-          image: user.avatar || null,
-        };
       }
     })
   ],
   session: {
-    strategy: "jwt"
+    strategy: "jwt",
+    maxAge: 30 * 24 * 60 * 60, // 30 days
   },
   callbacks: {
     async jwt({ token, user }) {
+      // Add user ID to the JWT when a user signs in
       if (user) {
         token.id = user.id;
       }
       return token;
     },
     async session({ session, token }) {
+      // Add user ID to the session from the token
       if (session.user) {
         session.user.id = token.id;
       }
@@ -91,10 +101,11 @@ export const authOptions: NextAuthOptions = {
   },
   pages: {
     signIn: "/login",
-    newUser: "/register"
+    newUser: "/register",
+    error: "/login", // Custom error page, redirects to login with error param
   },
-  secret: process.env.NEXTAUTH_SECRET,
   debug: process.env.NODE_ENV === "development",
+  secret: process.env.NEXTAUTH_SECRET,
 };
 
 const handler = NextAuth(authOptions);
