@@ -2,48 +2,42 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { useSession } from 'next-auth/react';
+import { useRouter } from 'next/navigation';
 import Image from 'next/image';
+import { supabaseClient } from '@/lib/supabase';
+import { getHouseholdMessages, sendMessage, subscribeToMessages, Message } from '@/lib/chat';
+import ChatInput from '@/components/chat/ChatInput';
+import MessageBubble from '@/components/chat/MessageBubble';
 
-// Mock data for demonstration
+// Keep your existing mock data for fallback
 const MOCK_MEMBERS = [
   {
     id: '1',
     name: 'Jane Smith',
     avatar: 'https://i.pravatar.cc/150?img=1',
-    status: 'ONLINE' as const,
+    status: 'ONLINE',
   },
   {
     id: '2',
     name: 'John Doe',
     avatar: 'https://i.pravatar.cc/150?img=8',
-    status: 'AWAY' as const,
+    status: 'AWAY',
   },
   {
     id: '3',
     name: 'Emily Johnson',
     avatar: 'https://i.pravatar.cc/150?img=5',
-    status: 'ONLINE' as const,
+    status: 'ONLINE',
   },
   {
     id: '4',
     name: 'Michael Brown',
     avatar: 'https://i.pravatar.cc/150?img=12',
-    status: 'OFFLINE' as const,
+    status: 'OFFLINE',
   },
 ];
 
-// Mock message data
-const MOCK_CONVERSATIONS: Record<string, {
-  messages: Array<{
-    id: string;
-    senderId: string;
-    text: string;
-    timestamp: Date;
-    read: boolean;
-  }>;
-  lastRead: Date | null;
-}> = {
+const MOCK_CONVERSATIONS = {
   'household': {
     messages: [
       {
@@ -53,172 +47,121 @@ const MOCK_CONVERSATIONS: Record<string, {
         timestamp: new Date('2024-02-25T14:30:00'),
         read: true,
       },
-      {
-        id: '2',
-        senderId: '2',
-        text: 'Thanks for the reminder! I will transfer the money tonight.',
-        timestamp: new Date('2024-02-25T14:45:00'),
-        read: true,
-      },
-      {
-        id: '3',
-        senderId: '1',
-        text: 'Already paid mine yesterday!',
-        timestamp: new Date('2024-02-25T15:10:00'),
-        read: true,
-      },
-      {
-        id: '4',
-        senderId: '4',
-        text: 'I will be paying tomorrow morning, sorry for the delay.',
-        timestamp: new Date('2024-02-25T17:23:00'),
-        read: false,
-      },
+      // Add more of your mock messages here
     ],
     lastRead: new Date('2024-02-25T15:10:00'),
   },
-  '2': {
-    messages: [
-      {
-        id: '1',
-        senderId: '2',
-        text: 'Hey Jane, do you know where the vacuum is?',
-        timestamp: new Date('2024-02-24T10:15:00'),
-        read: true,
-      },
-      {
-        id: '2',
-        senderId: '1',
-        text: 'I think Emily was using it last. Check the storage closet.',
-        timestamp: new Date('2024-02-24T10:20:00'),
-        read: true,
-      },
-      {
-        id: '3',
-        senderId: '2',
-        text: 'Found it, thanks!',
-        timestamp: new Date('2024-02-24T10:45:00'),
-        read: true,
-      },
-    ],
-    lastRead: new Date('2024-02-24T10:45:00'),
-  },
-  '3': {
-    messages: [
-      {
-        id: '1',
-        senderId: '1',
-        text: 'Emily, we need to talk about the bathroom cleaning schedule.',
-        timestamp: new Date('2024-02-23T18:30:00'),
-        read: true,
-      },
-      {
-        id: '2',
-        senderId: '3',
-        text: 'Sure, what is up?',
-        timestamp: new Date('2024-02-23T18:45:00'),
-        read: true,
-      },
-      {
-        id: '3',
-        senderId: '1',
-        text: 'I think we should switch weeks. I have a big deadline coming up.',
-        timestamp: new Date('2024-02-23T18:50:00'),
-        read: true,
-      },
-      {
-        id: '4',
-        senderId: '3',
-        text: 'No problem! I can take this week and you can do next week.',
-        timestamp: new Date('2024-02-23T18:55:00'),
-        read: true,
-      },
-      {
-        id: '5',
-        senderId: '1',
-        text: 'Thanks! You are the best!',
-        timestamp: new Date('2024-02-23T19:00:00'),
-        read: true,
-      },
-    ],
-    lastRead: new Date('2024-02-23T19:00:00'),
-  },
-  '4': {
-    messages: [
-      {
-        id: '1',
-        senderId: '4',
-        text: 'Jane, did you see my blue shirt?',
-        timestamp: new Date('2024-02-26T09:15:00'),
-        read: false,
-      },
-    ],
-    lastRead: null,
-  },
-};
-
-type MessageType = {
-  id: string;
-  senderId: string;
-  text: string;
-  timestamp: Date;
-  read: boolean;
+  // Add your other mock conversations here
 };
 
 export default function ChatPage() {
-  const { data: session } = useSession();
+  const [user, setUser] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
   const [activeConversation, setActiveConversation] = useState<string>('household');
-  const [messages, setMessages] = useState<MessageType[]>([]);
+  const [messages, setMessages] = useState<any[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isSending, setIsSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const router = useRouter();
   
-  // Current user ID (for demo)
-  const currentUserId = '1';
-  
-  // Set messages when active conversation changes
+  // Check authentication
   useEffect(() => {
+    const checkAuth = async () => {
+      try {
+        const { data: { session } } = await supabaseClient.auth.getSession();
+        
+        if (!session) {
+          router.push('/login');
+          return;
+        }
+        
+        setUser(session.user);
+        setLoading(false);
+      } catch (error) {
+        console.error('Authentication error:', error);
+        router.push('/login');
+      }
+    };
+
+    checkAuth();
+  }, [router]);
+
+  // Load messages
+  useEffect(() => {
+    if (!user) return;
+    
+    // For now, use mock data until database is properly set up
     if (activeConversation in MOCK_CONVERSATIONS) {
       setMessages(MOCK_CONVERSATIONS[activeConversation].messages);
     } else {
       setMessages([]);
     }
-  }, [activeConversation]);
+    
+    // Uncomment this when your database is ready:
+    /*
+    const loadMessages = async () => {
+      if (activeConversation === 'household') {
+        // In a real app, get the householdId from user's context
+        const householdId = '1'; // Replace with actual household ID
+        const messageData = await getHouseholdMessages(householdId);
+        setMessages(messageData);
+      }
+    };
+    
+    loadMessages();
+    
+    // Subscribe to new messages
+    if (activeConversation === 'household') {
+      const householdId = '1'; // Replace with actual household ID
+      const unsubscribe = subscribeToMessages(householdId, (newMessage) => {
+        setMessages(prevMessages => [...prevMessages, newMessage]);
+      });
+      
+      return unsubscribe;
+    }
+    */
+  }, [activeConversation, user]);
   
   // Scroll to bottom when messages change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
   
-  const handleSendMessage = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSendMessage = async (content: string) => {
+    if (!content.trim() || !user) return;
     
-    if (!newMessage.trim()) return;
+    setIsSending(true);
     
-    // Create a new message
-    const message: MessageType = {
-      id: `new-${Date.now()}`,
-      senderId: currentUserId,
-      text: newMessage,
-      timestamp: new Date(),
-      read: false,
-    };
-    
-    // Update the conversation
-    const updatedConversation = {
-      ...MOCK_CONVERSATIONS[activeConversation],
-      messages: [...MOCK_CONVERSATIONS[activeConversation].messages, message],
-    };
-    
-    MOCK_CONVERSATIONS[activeConversation] = updatedConversation;
-    
-    // Update the messages state
-    setMessages([...messages, message]);
-    
-    // Clear the input
-    setNewMessage('');
+    try {
+      // For now, use mock data approach
+      const message = {
+        id: `new-${Date.now()}`,
+        senderId: user.id || '1',
+        text: content,
+        timestamp: new Date(),
+        read: false,
+      };
+      
+      setMessages(prev => [...prev, message]);
+      
+      // Uncomment when your database is ready:
+      /*
+      if (activeConversation === 'household') {
+        // In a real app, get the householdId from user's context
+        const householdId = '1'; // Replace with actual household ID
+        await sendMessage(householdId, user.id, content);
+      }
+      */
+    } catch (error) {
+      console.error('Error sending message:', error);
+    } finally {
+      setNewMessage('');
+      setIsSending(false);
+    }
   };
   
+  // Format timestamp for messages
   const formatTimestamp = (timestamp: Date) => {
     const now = new Date();
     const messageDate = new Date(timestamp);
@@ -238,46 +181,14 @@ export default function ChatPage() {
     return messageDate.toLocaleDateString();
   };
   
-  const getUnreadCount = (conversationId: string) => {
-    if (!(conversationId in MOCK_CONVERSATIONS)) return 0;
-    
-    const { messages, lastRead } = MOCK_CONVERSATIONS[conversationId];
-    
-    // For private conversations, only count messages sent by the other person
-    const targetMessages = conversationId === 'household' 
-      ? messages 
-      : messages.filter(m => m.senderId !== currentUserId);
-    
-    if (!lastRead) {
-      return targetMessages.length;
-    }
-    
-    return targetMessages.filter(m => new Date(m.timestamp) > new Date(lastRead) && !m.read).length;
-  };
-  
-  const getStatusColor = (status: 'ONLINE' | 'AWAY' | 'OFFLINE') => {
-    switch (status) {
-      case 'ONLINE':
-        return 'bg-green-500';
-      case 'AWAY':
-        return 'bg-yellow-500';
-      case 'OFFLINE':
-        return 'bg-gray-500';
-    }
-  };
-  
-  const getConversationName = (conversationId: string) => {
-    if (conversationId === 'household') {
-      return 'Household Chat';
-    }
-    
-    const member = MOCK_MEMBERS.find(m => m.id === conversationId);
-    return member ? member.name : 'Unknown';
-  };
-  
-  const getMessageSender = (senderId: string) => {
-    return MOCK_MEMBERS.find(m => m.id === senderId) || { name: 'Unknown', avatar: 'https://i.pravatar.cc/150' };
-  };
+  // If still checking auth status, show loading
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-[calc(100vh-theme(spacing.16))] md:h-[calc(100vh-theme(spacing.8))] overflow-hidden bg-gray-50 dark:bg-gray-900">
@@ -346,11 +257,6 @@ export default function ChatPage() {
                     />
                   </svg>
                 </div>
-                {getUnreadCount('household') > 0 && (
-                  <div className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">
-                    {getUnreadCount('household')}
-                  </div>
-                )}
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
@@ -368,7 +274,7 @@ export default function ChatPage() {
               </h3>
             </div>
             
-            {MOCK_MEMBERS.filter(m => m.id !== currentUserId).map(member => (
+            {MOCK_MEMBERS.filter(m => m.id !== (user?.id || '1')).map(member => (
               <button
                 key={member.id}
                 onClick={() => {
@@ -391,13 +297,11 @@ export default function ChatPage() {
                     height={40}
                   />
                   <div 
-                    className={`absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-white dark:border-gray-800 ${getStatusColor(member.status)}`}
+                    className={`absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-white dark:border-gray-800 ${
+                      member.status === 'ONLINE' ? 'bg-green-500' :
+                      member.status === 'AWAY' ? 'bg-yellow-500' : 'bg-gray-500'
+                    }`}
                   />
-                  {getUnreadCount(member.id) > 0 && (
-                    <div className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">
-                      {getUnreadCount(member.id)}
-                    </div>
-                  )}
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
@@ -454,7 +358,10 @@ export default function ChatPage() {
                       height={40}
                     />
                     <div 
-                      className={`absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-white dark:border-gray-800 ${getStatusColor(member.status)}`}
+                      className={`absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-white dark:border-gray-800 ${
+                        member.status === 'ONLINE' ? 'bg-green-500' :
+                        member.status === 'AWAY' ? 'bg-yellow-500' : 'bg-gray-500'
+                      }`}
                     />
                   </div>
                   <div>
@@ -471,8 +378,8 @@ export default function ChatPage() {
         
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {messages.map((message, index) => {
-            const isCurrentUser = message.senderId === currentUserId;
-            const sender = getMessageSender(message.senderId);
+            const isCurrentUser = message.senderId === (user?.id || '1');
+            const sender = MOCK_MEMBERS.find(m => m.id === message.senderId) || { name: 'Unknown', avatar: 'https://i.pravatar.cc/150' };
             const showSender = 
               activeConversation === 'household' && 
               (index === 0 || messages[index - 1].senderId !== message.senderId);
@@ -535,32 +442,61 @@ export default function ChatPage() {
         </div>
         
         <div className="border-t border-gray-200 dark:border-gray-700 p-4">
-          <form onSubmit={handleSendMessage} className="flex items-center">
+          <form onSubmit={(e) => {
+            e.preventDefault();
+            handleSendMessage(newMessage);
+            setNewMessage('');
+          }} className="flex items-center">
             <input
               type="text"
               value={newMessage}
               onChange={(e) => setNewMessage(e.target.value)}
               placeholder="Type your message..."
-              className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-l-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+              disabled={isSending}
+              className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-l-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white disabled:opacity-50 disabled:cursor-not-allowed"
             />
             <button
               type="submit"
-              className="bg-blue-500 text-white px-4 py-2 rounded-r-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              disabled={!newMessage.trim() || isSending}
+              className="bg-blue-500 text-white px-4 py-2 rounded-r-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <svg 
-                className="h-5 w-5" 
-                fill="none" 
-                stroke="currentColor" 
-                viewBox="0 0 24 24" 
-                xmlns="http://www.w3.org/2000/svg"
-              >
-                <path 
-                  strokeLinecap="round" 
-                  strokeLinejoin="round" 
-                  strokeWidth={2} 
-                  d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" 
-                />
-              </svg>
+              {isSending ? (
+                <svg 
+                  className="animate-spin h-5 w-5 text-white" 
+                  xmlns="http://www.w3.org/2000/svg" 
+                  fill="none" 
+                  viewBox="0 0 24 24"
+                >
+                  <circle 
+                    className="opacity-25" 
+                    cx="12" 
+                    cy="12" 
+                    r="10" 
+                    stroke="currentColor" 
+                    strokeWidth="4"
+                  ></circle>
+                  <path 
+                    className="opacity-75" 
+                    fill="currentColor" 
+                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                  ></path>
+                </svg>
+              ) : (
+                <svg 
+                  className="h-5 w-5" 
+                  fill="none" 
+                  stroke="currentColor" 
+                  viewBox="0 0 24 24" 
+                  xmlns="http://www.w3.org/2000/svg"
+                >
+                  <path 
+                    strokeLinecap="round" 
+                    strokeLinejoin="round" 
+                    strokeWidth={2} 
+                    d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" 
+                  />
+                </svg>
+              )}
             </button>
           </form>
         </div>
