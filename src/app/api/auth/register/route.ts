@@ -1,7 +1,6 @@
 // src/app/api/auth/register/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
-import { v4 as uuidv4 } from 'uuid';
 
 export async function POST(request: NextRequest) {
   try {
@@ -60,17 +59,17 @@ export async function POST(request: NextRequest) {
     // Step 2: Create a corresponding record in the User table
     // Use the Supabase Auth user's ID for the user record
     const userId = authData.user.id;
-
+    
+    // Let Supabase handle the timestamps by using its defaults
     const { data: newUser, error: insertError } = await supabase
       .from('User')
       .insert([
         {
-          id: userId, // Use the Supabase Auth user ID
+          id: userId,
           name,
           email,
-          password: 'SUPABASE_AUTH', // We're not storing passwords in our table anymore
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
+          password: 'SUPABASE_AUTH',
+          // Don't specify createdAt and updatedAt - let Supabase handle them
         }
       ])
       .select('id, name, email, avatar, createdAt, updatedAt')
@@ -78,6 +77,8 @@ export async function POST(request: NextRequest) {
 
     if (insertError) {
       console.error('Error creating user in User table:', insertError);
+      console.error('Full error details:', JSON.stringify(insertError, null, 2));
+      console.error('Attempted to insert user with ID:', userId);
       
       // If we failed to create the user record, clean up by deleting the auth user
       try {
@@ -87,7 +88,7 @@ export async function POST(request: NextRequest) {
       }
 
       return NextResponse.json(
-        { message: 'Error creating user profile' },
+        { message: 'Error creating user profile', details: insertError.message },
         { status: 500 }
       );
     }
