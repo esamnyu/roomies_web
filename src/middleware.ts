@@ -5,6 +5,7 @@ import { createMiddlewareClient } from '@supabase/auth-helpers-nextjs';
 
 // List of paths that don't require authentication
 const publicPaths = [
+  '/',
   '/login',
   '/register',
   '/forgot-password',

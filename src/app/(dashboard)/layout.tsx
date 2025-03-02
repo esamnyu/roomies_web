@@ -4,28 +4,58 @@
 import { useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { useSession, signOut } from 'next-auth/react';
 import Image from 'next/image';
+import { supabaseClient } from '@/lib/supabase';
 
 export default function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const { data: session, status } = useSession();
+  const [user, setUser] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
   const router = useRouter();
   const pathname = usePathname();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   useEffect(() => {
-    // Redirect to login if not authenticated
-    if (status === 'unauthenticated') {
+    // Check if user is authenticated
+    const checkAuth = async () => {
+      try {
+        const { data: { session } } = await supabaseClient.auth.getSession();
+        
+        if (!session) {
+          // Redirect to login if not authenticated
+          router.push('/login');
+          return;
+        }
+        
+        // Get user profile data from your database if needed
+        // For now, just use the user data from the session
+        setUser(session.user);
+      } catch (error) {
+        console.error('Authentication error:', error);
+        router.push('/login');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    checkAuth();
+  }, [router]);
+
+  // Handle sign out
+  const handleSignOut = async () => {
+    try {
+      await supabaseClient.auth.signOut();
       router.push('/login');
+    } catch (error) {
+      console.error('Error signing out:', error);
     }
-  }, [status, router]);
+  };
 
   // Show loading state while checking authentication
-  if (status === 'loading') {
+  if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
@@ -96,10 +126,10 @@ export default function DashboardLayout({
               onClick={() => {/* Toggle user dropdown */}}
             >
               <div className="h-8 w-8 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
-                {session?.user?.image ? (
+                {user?.user_metadata?.avatar_url ? (
                   <Image
-                    src={session.user.image}
-                    alt={session.user.name || 'User'}
+                    src={user.user_metadata.avatar_url}
+                    alt={user.user_metadata.name || 'User'}
                     width={32}
                     height={32}
                   />
@@ -153,10 +183,10 @@ export default function DashboardLayout({
             <div className="border-t border-gray-200 dark:border-gray-700 p-4 mt-auto">
               <div className="flex items-center">
                 <div className="h-10 w-10 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
-                  {session?.user?.image ? (
+                  {user?.user_metadata?.avatar_url ? (
                     <Image
-                      src={session.user.image}
-                      alt={session.user.name || 'User'}
+                      src={user.user_metadata.avatar_url}
+                      alt={user.user_metadata.name || 'User'}
                       width={40}
                       height={40}
                     />
@@ -167,8 +197,10 @@ export default function DashboardLayout({
                   )}
                 </div>
                 <div className="ml-3">
-                  <p className="text-sm font-medium text-gray-900 dark:text-white">{session?.user?.name}</p>
-                  <p className="text-xs text-gray-500 dark:text-gray-400">{session?.user?.email}</p>
+                  <p className="text-sm font-medium text-gray-900 dark:text-white">
+                    {user?.user_metadata?.name || user?.email}
+                  </p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">{user?.email}</p>
                 </div>
               </div>
               <div className="mt-4 space-y-2">
@@ -182,7 +214,7 @@ export default function DashboardLayout({
                   </Link>
                 ))}
                 <button
-                  onClick={() => signOut({ callbackUrl: '/login' })}
+                  onClick={handleSignOut}
                   className="text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 text-sm font-medium block py-2"
                 >
                   Sign out
@@ -220,10 +252,10 @@ export default function DashboardLayout({
           <div className="flex-shrink-0 border-t border-gray-200 dark:border-gray-700 p-4">
             <div className="flex items-center">
               <div className="h-10 w-10 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
-                {session?.user?.image ? (
+                {user?.user_metadata?.avatar_url ? (
                   <Image
-                    src={session.user.image}
-                    alt={session.user.name || 'User'}
+                    src={user.user_metadata.avatar_url}
+                    alt={user.user_metadata.name || 'User'}
                     width={40}
                     height={40}
                   />
@@ -234,7 +266,9 @@ export default function DashboardLayout({
                 )}
               </div>
               <div className="ml-3">
-                <p className="text-sm font-medium text-gray-900 dark:text-white">{session?.user?.name}</p>
+                <p className="text-sm font-medium text-gray-900 dark:text-white">
+                  {user?.user_metadata?.name || user?.email}
+                </p>
                 <div className="flex mt-1 space-x-2">
                   {userNavigation.map((item) => (
                     <Link
@@ -246,7 +280,7 @@ export default function DashboardLayout({
                     </Link>
                   ))}
                   <button
-                    onClick={() => signOut({ callbackUrl: '/login' })}
+                    onClick={handleSignOut}
                     className="text-xs text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300"
                   >
                     Sign out

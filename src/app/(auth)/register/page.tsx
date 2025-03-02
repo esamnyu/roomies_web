@@ -2,9 +2,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { supabaseClient } from '@/lib/supabase';
 
 export default function RegisterPage() {
   const [name, setName] = useState('');
@@ -12,23 +12,35 @@ export default function RegisterPage() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
+  const [authChecking, setAuthChecking] = useState(true);
   
   const router = useRouter();
-  const { status } = useSession();
   
-  // Redirect if already authenticated
+  // Check authentication status on mount
   useEffect(() => {
-    if (status === 'authenticated') {
-      router.push('/dashboard');
-    }
-  }, [status, router]);
+    const checkAuth = async () => {
+      const { data: { session } } = await supabaseClient.auth.getSession();
+      
+      if (session) {
+        // User is already logged in, redirect to dashboard
+        router.push('/dashboard');
+      } else {
+        // User is not logged in, allow them to see the register page
+        setAuthChecking(false);
+      }
+    };
+    
+    checkAuth();
+  }, [router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError('');
-
+    setSuccess('');
+  
     // Validate input
     if (password !== confirmPassword) {
       setError('Passwords do not match');
@@ -41,32 +53,66 @@ export default function RegisterPage() {
       setLoading(false);
       return;
     }
-
+  
     try {
-      const response = await fetch('/api/auth/register', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ name, email, password }),
+      // Sign up with Supabase Auth
+      const { data, error: signUpError } = await supabaseClient.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            name
+          },
+          emailRedirectTo: `${window.location.origin}/auth/callback` // Important for redirect after verification
+        }
       });
+  
+      if (signUpError) throw new Error(signUpError.message);
+  
+      // Create user record in database if needed
+      if (data?.user) {
+        try {
+          const { error: insertError } = await supabaseClient
+            .from('User')
+            .insert({
+              id: data.user.id,
+              email,
+              name,
+              password: 'MANAGED_BY_SUPABASE_AUTH',
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            });
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.message || 'Registration failed');
+          if (insertError) {
+            console.error('Error creating user record:', insertError);
+          }
+        } catch (dbError) {
+          console.error('Database error:', dbError);
+        }
       }
-
-      // Redirect to login page with success message
-      router.push('/login?registered=true');
+  
+      // Check if email confirmation is required
+      if (!data.session) {
+        // Email confirmation required
+        setSuccess(
+          'Registration successful! Please check your email to verify your account. You will be redirected to the dashboard after verification.'
+        );
+        
+        // Store email in localStorage to check verification status later
+        localStorage.setItem('pendingVerification', email);
+      } else {
+        // Email confirmation not required (if you disabled it in Supabase)
+        router.push('/dashboard');
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred during registration');
+    } finally {
       setLoading(false);
     }
   };
 
   // If still checking auth status, show loading
-  if (status === 'loading') {
+  if (authChecking) {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
@@ -103,6 +149,23 @@ export default function RegisterPage() {
               <div className="ml-3">
                 <p className="text-sm font-medium text-red-800 dark:text-red-200">
                   {error}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+        
+        {success && (
+          <div className="rounded-md bg-green-50 dark:bg-green-900 p-4">
+            <div className="flex">
+              <div className="flex-shrink-0">
+                <svg className="h-5 w-5 text-green-400" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                </svg>
+              </div>
+              <div className="ml-3">
+                <p className="text-sm font-medium text-green-800 dark:text-green-200">
+                  {success}
                 </p>
               </div>
             </div>

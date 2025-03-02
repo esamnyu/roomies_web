@@ -3,8 +3,9 @@ import { NextAuthOptions } from "next-auth";
 import NextAuth from "next-auth/next";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { supabase } from "@/lib/supabase";
-import bcrypt from "bcrypt";
 
+// At the top of your [...nextauth]/route.ts file
+console.log("NextAuth API route is being executed");
 // Add custom types for NextAuth
 declare module "next-auth" {
   interface User {
@@ -43,34 +44,35 @@ export const authOptions: NextAuthOptions = {
         }
         
         try {
-          // Query Supabase for the user with the provided email
-          const { data: user, error } = await supabase
+          // Use Supabase Auth for authentication
+          const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+            email: credentials.email,
+            password: credentials.password,
+          });
+
+          if (authError || !authData.user) {
+            console.error("Authentication error:", authError?.message);
+            return null;
+          }
+
+          // Get additional user info from your User table if needed
+          const { data: userData, error: userError } = await supabase
             .from('User')
-            .select('id, email, name, password, avatar')
-            .eq('email', credentials.email)
+            .select('id, name, email, avatar')
+            .eq('id', authData.user.id)
             .single();
 
-          if (error || !user) {
-            console.error("User lookup error:", error?.message);
-            return null;
+          if (userError) {
+            console.error("User lookup error:", userError.message);
+            // Still proceed with auth data if user table lookup fails
           }
 
-          // Verify the password
-          const passwordMatch = await bcrypt.compare(
-            credentials.password,
-            user.password
-          );
-
-          if (!passwordMatch) {
-            return null;
-          }
-
-          // Return the user data without sensitive information
+          // Return the user data
           return {
-            id: user.id,
-            email: user.email,
-            name: user.name,
-            image: user.avatar || null,
+            id: authData.user.id,
+            email: authData.user.email || '',
+            name: userData?.name || authData.user.email?.split('@')[0] || 'User',
+            image: userData?.avatar || null,
           };
         } catch (error) {
           console.error("Authentication error:", error);

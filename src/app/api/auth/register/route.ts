@@ -1,8 +1,7 @@
 // src/app/api/auth/register/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
-import bcrypt from 'bcrypt';
-import { v4 as uuidv4 } from 'uuid'; // Add UUID generation
+import { v4 as uuidv4 } from 'uuid';
 
 export async function POST(request: NextRequest) {
   try {
@@ -23,44 +22,53 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check if user already exists
-    const { data: existingUser, error: checkError } = await supabase
-      .from('User')
-      .select('id')
-      .eq('email', email)
-      .maybeSingle();
+    // Step 1: Create the user in Supabase Auth
+    const { data: authData, error: authError } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: {
+          name: name,
+        }
+      }
+    });
 
-    if (checkError) {
-      console.error('Error checking existing user:', checkError);
+    if (authError) {
+      // Check if it's a duplicate email error
+      if (authError.message.includes('email already')) {
+        return NextResponse.json(
+          { message: 'User with this email already exists' },
+          { status: 409 }
+        );
+      }
+
+      console.error('Error creating Supabase Auth user:', authError);
       return NextResponse.json(
-        { message: 'Error checking user existence' },
+        { message: 'Error registering user' },
         { status: 500 }
       );
     }
 
-    if (existingUser) {
+    // Make sure we have a user
+    if (!authData.user) {
       return NextResponse.json(
-        { message: 'User with this email already exists' },
-        { status: 409 }
+        { message: 'Failed to create user account' },
+        { status: 500 }
       );
     }
 
-    // Hash the password
-    const saltRounds = 10;
-    const hashedPassword = await bcrypt.hash(password, saltRounds);
+    // Step 2: Create a corresponding record in the User table
+    // Use the Supabase Auth user's ID for the user record
+    const userId = authData.user.id;
 
-    // Generate a unique ID for the user (to match Prisma's cuid() behavior)
-    const userId = uuidv4();
-    
-    // Create the user in Supabase
     const { data: newUser, error: insertError } = await supabase
       .from('User')
       .insert([
         {
-          id: userId, // Explicitly provide the ID
+          id: userId, // Use the Supabase Auth user ID
           name,
           email,
-          password: hashedPassword,
+          password: 'SUPABASE_AUTH', // We're not storing passwords in our table anymore
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         }
@@ -69,9 +77,17 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (insertError) {
-      console.error('Error creating user:', insertError);
+      console.error('Error creating user in User table:', insertError);
+      
+      // If we failed to create the user record, clean up by deleting the auth user
+      try {
+        await supabase.auth.admin.deleteUser(userId);
+      } catch (cleanupError) {
+        console.error('Error during cleanup:', cleanupError);
+      }
+
       return NextResponse.json(
-        { message: 'Error creating user' },
+        { message: 'Error creating user profile' },
         { status: 500 }
       );
     }
