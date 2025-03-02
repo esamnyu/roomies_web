@@ -1,7 +1,8 @@
 // src/app/(dashboard)/dashboard/page.tsx
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useSearchParams } from 'next/navigation';
 import HouseholdInfo from '@/components/dashboard/HouseholdInfo';
 import MemberGrid from '@/components/dashboard/MemberGrid';
 import Link from 'next/link';
@@ -73,6 +74,23 @@ export default function DashboardPage() {
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState('MEMBER');
   const [inviteMessage, setInviteMessage] = useState('');
+  const [showWelcomeMessage, setShowWelcomeMessage] = useState(false);
+  
+  const searchParams = useSearchParams();
+  
+  // Check if user just verified their account
+  useEffect(() => {
+    if (searchParams.get('verified') === 'true') {
+      setShowWelcomeMessage(true);
+      
+      // Auto-hide the welcome message after 8 seconds
+      const timer = setTimeout(() => {
+        setShowWelcomeMessage(false);
+      }, 8000);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [searchParams]);
 
   // In a real app, you would fetch this data from your API
   // For now, we'll use mock data
@@ -90,6 +108,38 @@ export default function DashboardPage() {
 
   return (
     <div>
+      {/* Verification Welcome Message */}
+      {showWelcomeMessage && (
+        <div className="mb-6 p-4 bg-green-50 dark:bg-green-900 rounded-lg border border-green-200 dark:border-green-800 shadow-md">
+          <div className="flex items-start">
+            <div className="flex-shrink-0">
+              <svg className="h-6 w-6 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <div className="ml-3">
+              <h3 className="text-lg font-medium text-green-800 dark:text-green-200">
+                Welcome to Roomies!
+              </h3>
+              <div className="mt-2 text-sm text-green-700 dark:text-green-300">
+                <p>Your account has been successfully verified. You can now enjoy all the features of our app.</p>
+              </div>
+              <div className="mt-4">
+                <div className="-mx-2 -my-1.5 flex">
+                  <button
+                    type="button"
+                    onClick={() => setShowWelcomeMessage(false)}
+                    className="ml-auto bg-green-50 dark:bg-green-900 px-2 py-1.5 rounded-md text-sm font-medium text-green-800 dark:text-green-200 hover:bg-green-100 dark:hover:bg-green-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex flex-col lg:flex-row gap-6">
         <div className="w-full lg:w-2/3">
           <HouseholdInfo

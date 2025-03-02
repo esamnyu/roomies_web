@@ -10,6 +10,7 @@ const publicPaths = [
   '/register',
   '/forgot-password',
   '/reset-password',
+  '/auth/callback',  // Add this for Supabase auth callback
   '/api/auth/register',
   '/api/auth/login',
   '/api/auth/forgot-password',
