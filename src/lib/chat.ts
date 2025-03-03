@@ -146,40 +146,39 @@ export async function getUnreadMessagesCount(householdId: string, userId: string
   return unreadCount;
 }
 
-// Subscribe to new messages
 export function subscribeToMessages(householdId: string, callback: (message: Message) => void) {
-  const subscription = supabaseClient
-    .channel(`messages:${householdId}`)
-    .on(
-      'postgres_changes',
-      {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'Message',
-        filter: `householdId=eq.${householdId}`
-      },
-      async (payload) => {
-        // Fetch the complete message with sender information
-        const { data, error } = await supabaseClient
-          .from('Message')
-          .select(`
-            *,
-            sender:senderId(id, name, avatar)
-          `)
-          .eq('id', payload.new.id)
-          .single();
-          
-        if (!error && data) {
-          callback(data as Message);
-        } else {
-          // Fallback to the raw payload if we can't get the complete message
-          callback(payload.new as Message);
+    const subscription = supabaseClient
+      .channel('messages')
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'Message',
+          filter: `householdId=eq.${householdId}`
+        },
+        async (payload) => {
+          // Fetch the complete message with sender information
+          const { data, error } = await supabaseClient
+            .from('Message')
+            .select(`
+              *,
+              sender:senderId(id, name, avatar)
+            `)
+            .eq('id', payload.new.id)
+            .single();
+            
+          if (!error && data) {
+            callback(data as Message);
+          } else {
+            // Fallback to the raw payload if we can't get the complete message
+            callback(payload.new as Message);
+          }
         }
-      }
-    )
-    .subscribe();
-
-  return () => {
-    supabaseClient.removeChannel(subscription);
-  };
-}
+      )
+      .subscribe();
+  
+    return () => {
+      supabaseClient.removeChannel(subscription);
+    };
+  }

@@ -219,64 +219,69 @@ export default function ChatPage() {
     checkAuth();
   }, [router]);
 
-  // Load messages
-  useEffect(() => {
-    if (!user) return;
-    
-    const loadMessages = async () => {
-      if (isDatabaseReady && activeConversation === 'household' && householdId) {
-        // Use real database data
-        try {
-          const messageData = await getHouseholdMessages(householdId);
-          setMessages(messageData);
-          
-          // Mark messages as read
-          messageData.forEach((msg: { senderId: any; id: any; }) => {
-            if (msg.senderId !== user.id) {
-              markMessageAsRead(msg.id, user.id);
-            }
-          });
-        } catch (error) {
-          console.error('Error loading messages:', error);
-          // Fallback to mock data if there's an error
-          if (activeConversation in MOCK_CONVERSATIONS) {
-            setMessages(MOCK_CONVERSATIONS[activeConversation].messages);
-          } else {
-            setMessages([]);
+// In the useEffect where you load messages
+useEffect(() => {
+  if (!user) return;
+  
+  const loadMessages = async () => {
+    if (isDatabaseReady && activeConversation === 'household' && householdId) {
+      console.log('Loading messages for household:', householdId);
+      // Use real database data
+      try {
+        const messageData = await getHouseholdMessages(householdId);
+        console.log('Messages loaded:', messageData);
+        setMessages(messageData);
+        
+        // Mark messages as read
+        messageData.forEach((msg: { senderId: any; id: any; }) => {
+          if (msg.senderId !== user.id) {
+            markMessageAsRead(msg.id, user.id);
           }
-        }
-      } else {
-        // Use mock data until database is ready
+        });
+      } catch (error) {
+        console.error('Error loading messages:', error);
+        // Fallback to mock data if there's an error
         if (activeConversation in MOCK_CONVERSATIONS) {
           setMessages(MOCK_CONVERSATIONS[activeConversation].messages);
         } else {
           setMessages([]);
         }
       }
-    };
-    
-    loadMessages();
-    
-    // Subscribe to new messages if database is ready
-    if (isDatabaseReady && activeConversation === 'household' && householdId) {
-      const unsubscribe = subscribeToMessages(householdId, (newMessage: Message) => {
-        setMessages(prevMessages => {
-          // Check if message already exists (to prevent duplicates)
-          const exists = prevMessages.some(msg => msg.id === newMessage.id);
-          if (exists) return prevMessages;
-          
-          // Mark the message as read if it's not from the current user
-          if (newMessage.senderId !== user.id) {
-            markMessageAsRead(newMessage.id, user.id);
-          }
-          
-          return [...prevMessages, newMessage];
-        });
-      });
-      
-      return unsubscribe;
+    } else {
+      console.log('Using mock data. Database ready:', isDatabaseReady, 'Conversation:', activeConversation, 'HouseholdId:', householdId);
+      // Use mock data until database is ready
+      if (activeConversation in MOCK_CONVERSATIONS) {
+        setMessages(MOCK_CONVERSATIONS[activeConversation].messages);
+      } else {
+        setMessages([]);
+      }
     }
-  }, [activeConversation, user, isDatabaseReady, householdId]);
+  };
+  
+  loadMessages();
+  
+  // Subscribe to new messages if database is ready
+  if (isDatabaseReady && activeConversation === 'household' && householdId) {
+    console.log('Subscribing to messages for household:', householdId);
+    const unsubscribe = subscribeToMessages(householdId, (newMessage: Message) => {
+      console.log('New message received:', newMessage);
+      setMessages(prevMessages => {
+        // Check if message already exists (to prevent duplicates)
+        const exists = prevMessages.some(msg => msg.id === newMessage.id);
+        if (exists) return prevMessages;
+        
+        // Mark the message as read if it's not from the current user
+        if (newMessage.senderId !== user.id) {
+          markMessageAsRead(newMessage.id, user.id);
+        }
+        
+        return [...prevMessages, newMessage];
+      });
+    });
+    
+    return unsubscribe;
+  }
+}, [activeConversation, user, isDatabaseReady, householdId]);
   
   // Scroll to bottom when messages change
   useEffect(() => {

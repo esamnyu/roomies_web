@@ -6,27 +6,27 @@ import { supabaseClient } from './supabase';
  * @returns {Promise<boolean>} True if the table exists and is accessible
  */
 export async function isMessageTableReady(): Promise<boolean> {
-  try {
-    // Try to select a single record from the Message table
-    const { data, error } = await supabaseClient
-      .from('Message')
-      .select('id')
-      .limit(1);
-    
-    // If there's no error, the table exists and is accessible
-    if (!error) {
-      console.log('Message table is ready to use');
-      return true;
+    try {
+      // Try to select a single record from the Message table
+      const { data, error } = await supabaseClient
+        .from('Message')
+        .select('id')
+        .limit(1);
+      
+      // If there's no error, the table exists and is accessible
+      if (!error) {
+        console.log('Message table is ready to use');
+        return true;
+      }
+      
+      // Log the specific error
+      console.error('Message table not ready:', error.message, error.details, error.hint);
+      return false;
+    } catch (err) {
+      console.error('Error checking Message table:', err);
+      return false;
     }
-    
-    // Log the specific error
-    console.error('Message table not ready:', error.message);
-    return false;
-  } catch (err) {
-    console.error('Error checking Message table:', err);
-    return false;
   }
-}
 
 /**
  * Check if all chat-related tables are ready to use
