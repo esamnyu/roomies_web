@@ -45,32 +45,37 @@ export async function getHouseholdMessages(householdId: string): Promise<Message
   return data || [];
 }
 
-// Send a new message
+// In src/lib/chat.ts
 export async function sendMessage(householdId: string, senderId: string, content: string): Promise<Message | null> {
-  const now = new Date().toISOString();
+    // Generate a UUID for the message ID
+    const messageId = generateUUID(); // Use the same UUID function you've added elsewhere
+    const now = new Date().toISOString();
+    
+    console.log('Sending message with ID:', messageId);
+    
+    const { data, error } = await supabaseClient
+      .from('Message')
+      .insert([
+        {
+          id: messageId, // Explicitly provide an ID
+          householdId,
+          senderId,
+          content,
+          contentType: 'TEXT',
+          createdAt: now,
+          updatedAt: now
+        }
+      ])
+      .select()
+      .single();
   
-  const { data, error } = await supabaseClient
-    .from('Message')
-    .insert([
-      {
-        householdId,
-        senderId,
-        content,
-        contentType: 'TEXT',
-        createdAt: now,
-        updatedAt: now
-      }
-    ])
-    .select()
-    .single();
-
-  if (error) {
-    console.error('Error sending message:', error);
-    return null;
+    if (error) {
+      console.error('Error sending message:', error);
+      return null;
+    }
+  
+    return data;
   }
-
-  return data;
-}
 
 // Mark message as read
 export async function markMessageAsRead(messageId: string, userId: string): Promise<ReadReceipt | null> {

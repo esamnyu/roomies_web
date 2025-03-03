@@ -162,6 +162,15 @@ const MOCK_CONVERSATIONS: MockConversationsType = {
   },
 };
 
+// Function to generate a UUID
+function generateUUID() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
 // Main component
 export default function ChatPage() {
   const [user, setUser] = useState<any>(null);
@@ -176,23 +185,57 @@ export default function ChatPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
   
-  // Check authentication
-  useEffect(() => {
-    const checkAuth = async () => {
-      try {
-        const { data: { session } } = await supabaseClient.auth.getSession();
+// Check authentication
+useEffect(() => {
+  const checkAuth = async () => {
+    try {
+      const { data: { session } } = await supabaseClient.auth.getSession();
+      
+      if (!session) {
+        router.push('/login');
+        return;
+      }
+      
+      setUser(session.user);
+
+      // First, check if the user exists in the User table
+      const { data: userData, error: userError } = await supabaseClient
+        .from('User')
+        .select('id')
+        .eq('id', session.user.id)
+        .single();
+      
+      if (userError) {
+        console.log('User not found in User table, creating...');
+        // Create a user record
+        const { data: newUser, error: createUserError } = await supabaseClient
+          .from('User')
+          .insert([
+            {
+              id: session.user.id,
+              email: session.user.email,
+              name: session.user.user_metadata?.name || session.user.email?.split('@')[0] || 'User',
+              password: 'MANAGED_BY_SUPABASE_AUTH',
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            }
+          ])
+          .select('id')
+          .single();
         
-        if (!session) {
-          router.push('/login');
+        if (createUserError) {
+          console.error('Error creating user record:', createUserError);
+          setLoading(false);
           return;
         }
         
-        setUser(session.user);
+        console.log('Created user record:', newUser.id);
+      }
 
-        // Check if database tables are ready
-        const dbStatus = await areAllChatTablesReady();
-        setIsDatabaseReady(dbStatus.ready);
-        console.log('Database status:', dbStatus);
+      // Check if database tables are ready
+      const dbStatus = await areAllChatTablesReady();
+      setIsDatabaseReady(dbStatus.ready);
+      console.log('Database status:', dbStatus);
         
         // Get user's household
         const { data: householdUser, error: householdError } = await supabaseClient
@@ -205,8 +248,66 @@ export default function ChatPage() {
         
         if (!householdError && householdUser) {
           setHouseholdId(householdUser.householdId);
+          console.log('Found household ID:', householdUser.householdId);
         } else {
-          console.log('User has no households or error fetching household');
+          console.log('User has no households or error fetching household:', householdError?.message);
+          
+          // Create a new household and associate it with the user (for testing only)
+          try {
+            console.log('Creating test household for user:', session.user.id);
+            
+            // Generate a UUID for the new household
+            const householdUUID = generateUUID();
+            console.log('Generated UUID for new household:', householdUUID);
+            
+            // 1. Create a new household with explicit UUID
+            const { data: newHousehold, error: createError } = await supabaseClient
+              .from('Household')
+              .insert([
+                {
+                  id: householdUUID,
+                  name: 'Test Household',
+                  address: 'Test Address',
+                  createdAt: new Date().toISOString(),
+                  updatedAt: new Date().toISOString()
+                }
+              ])
+              .select('id')
+              .single();
+            
+            if (createError || !newHousehold) {
+              console.error('Error creating test household:', createError);
+              setLoading(false);
+              return;
+            }
+            
+            // 2. Associate the user with the new household
+            const householdUserUUID = generateUUID(); // Generate a UUID for the HouseholdUser
+            const { data: newMembership, error: memberError } = await supabaseClient
+              .from('HouseholdUser')
+              .insert([
+                {
+                  id: householdUserUUID, // Add this line to provide an ID
+                  userId: session.user.id,
+                  householdId: newHousehold.id,
+                  role: 'ADMIN',
+                  joinedAt: new Date().toISOString()
+                }
+              ])
+              .select()
+              .single();
+            
+            if (memberError) {
+              console.error('Error creating household membership:', memberError);
+              setLoading(false);
+              return;
+            }
+            
+            console.log('Created test household with ID:', newHousehold.id);
+            setHouseholdId(newHousehold.id);
+          } catch (err) {
+            console.error('Error in household creation process:', err);
+          }
         }
         
         setLoading(false);
@@ -289,15 +390,26 @@ useEffect(() => {
   }, [messages]);
   
   const handleSendMessage = async (content: string) => {
+    console.log("Attempting to send message:", { 
+      content, 
+      userId: user?.id, 
+      isDatabaseReady, 
+      activeConversation, 
+      householdId 
+    });
+    
     if (!content.trim() || !user) return;
     
     setIsSending(true);
     
     try {
       if (isDatabaseReady && activeConversation === 'household' && householdId) {
+        console.log('Sending real message to database');
         // Use real database
-        await sendMessage(householdId, user.id, content);
+        const result = await sendMessage(householdId, user.id, content);
+        console.log('Message send result:', result);
       } else {
+        console.log('Using mock data approach for message');
         // Use mock data approach
         const message = {
           id: `new-${Date.now()}`,
@@ -669,35 +781,36 @@ useEffect(() => {
                     cx="12" 
                     cy="12" 
                     r="10" 
-                    stroke="currentColor" 
+                    stroke="currentColor"
                     strokeWidth="4"
-                  ></circle>
-                  <path 
-                    className="opacity-75" 
-                    fill="currentColor" 
-                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                  ></path>
-                </svg>
-              ) : (
-                <svg 
-                  className="h-5 w-5" 
-                  fill="none" 
-                  stroke="currentColor" 
-                  viewBox="0 0 24 24" 
-                  xmlns="http://www.w3.org/2000/svg"
-                >
-                  <path 
-                    strokeLinecap="round" 
-                    strokeLinejoin="round" 
-                    strokeWidth={2} 
-                    d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" 
-                  />
-                </svg>
-              )}
-            </button>
-          </form>
-        </div>
-      </div>
-    </div>
-  );
+               ></circle>
+               <path 
+                 className="opacity-75" 
+                 fill="currentColor" 
+                 d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+               ></path>
+             </svg>
+           ) : (
+             <svg 
+               className="h-5 w-5"
+               fill="none" 
+               stroke="currentColor" 
+               viewBox="0 0 24 24" 
+               xmlns="http://www.w3.org/2000/svg"
+             >
+               <path 
+                 strokeLinecap="round" 
+                 strokeLinejoin="round" 
+                 strokeWidth={2} 
+                 d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" 
+               />
+             </svg>
+           )}
+         </button>
+       </form>
+     </div>
+   </div>
+ </div>
+);
 }
+                    
