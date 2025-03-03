@@ -1,6 +1,6 @@
 // src/lib/chat.ts
 import { supabaseClient } from './supabase';
-
+import { generateUUID } from '@/lib/utils';
 // Types
 export interface Message {
   id: string;

@@ -8,7 +8,6 @@ import { supabaseClient } from '@/lib/supabase';
 import { getHouseholdMessages, sendMessage, subscribeToMessages, markMessageAsRead, Message } from '@/lib/chat';
 import { areAllChatTablesReady } from '@/lib/databaseReadiness';
 import ChatInput from '@/components/chat/ChatInput';
-
 // Define types for mock data
 interface MockMessage {
   id: string;
