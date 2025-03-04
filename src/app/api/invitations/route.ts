@@ -24,16 +24,7 @@ export async function GET(request: NextRequest) {
     try {
       console.log('[Invitations API] Initializing Supabase client');
       
-      // Check cookies are accessible
-      const cookieStore = await cookies();
-      const allCookies = cookieStore.getAll();
-      console.log('[Invitations API] Available cookies count:', allCookies.length);
-      console.log('[Invitations API] Cookie names available:', allCookies.map((c: { name: any; }) => c.name).join(', '));
-      
-      // Look specifically for Supabase auth cookies
-      const authCookies = allCookies.filter((c: { name: string | string[]; }) => c.name.includes('auth'));
-      console.log('[Invitations API] Auth cookie names:', authCookies.map((c: { name: any; }) => c.name).join(', '));
-      
+      // Pass cookies function directly to createRouteHandlerClient
       supabase = createRouteHandlerClient({ cookies });
       console.log('[Invitations API] Supabase client created successfully');
     } catch (clientError) {
@@ -68,7 +59,7 @@ export async function GET(request: NextRequest) {
         console.log('[Invitations API] No active session found');
         
         // Check for auth cookies again to see if they're available but not valid
-        const cookieStore = await cookies();
+        const cookieStore = cookies();
         const authCookies = cookieStore.getAll().filter((c: { name: string | string[]; }) => c.name.includes('auth'));
         if (authCookies.length > 0) {
           console.log('[Invitations API] Auth cookies present but no valid session - possible token expiration');
@@ -234,7 +225,7 @@ export async function POST(request: NextRequest) {
     
     try {
       // Check cookies are accessible
-      const cookieStore = await cookies();
+      const cookieStore = cookies();
       const allCookies = cookieStore.getAll();
       console.log('[Invitations API] Available cookies count:', allCookies.length);
       console.log('[Invitations API] Cookie names available:', allCookies.map((c: { name: any; }) => c.name).join(', '));
@@ -250,6 +241,7 @@ export async function POST(request: NextRequest) {
     let supabase;
     try {
       console.log('[Invitations API] Initializing Supabase client with createRouteHandlerClient');
+      // Pass cookies function directly
       supabase = createRouteHandlerClient({ cookies });
       console.log('[Invitations API] Supabase client created successfully');
     } catch (clientError) {
@@ -284,7 +276,7 @@ export async function POST(request: NextRequest) {
         console.log('[Invitations API] No active session found');
         
         // Check for auth cookies again to see if they're available but not valid
-        const cookieStore = await cookies();
+        const cookieStore = cookies();
         const authCookies = cookieStore.getAll().filter((c: { name: string | string[]; }) => c.name.includes('auth'));
         if (authCookies.length > 0) {
           console.log('[Invitations API] Auth cookies present but no valid session - possible token expiration');
@@ -530,6 +522,7 @@ export async function PATCH(request: NextRequest) {
     let supabase;
     try {
       console.log('[Invitations API] Initializing Supabase client');
+      // Pass cookies function directly
       supabase = createRouteHandlerClient({ cookies });
       console.log('[Invitations API] Supabase client created successfully');
     } catch (clientError) {
@@ -720,7 +713,7 @@ export async function PUT(request: NextRequest) {
       console.log('[Invitations API] Initializing Supabase client');
       
       // Check cookies are accessible
-      const cookieStore = await cookies();
+      const cookieStore = cookies();
       const allCookies = cookieStore.getAll();
       console.log('[Invitations API] Available cookies count:', allCookies.length);
       console.log('[Invitations API] Cookie names available:', allCookies.map((c: { name: any; }) => c.name).join(', '));
@@ -729,6 +722,7 @@ export async function PUT(request: NextRequest) {
       const authCookies = allCookies.filter((c: { name: string | string[]; }) => c.name.includes('auth'));
       console.log('[Invitations API] Auth cookie names:', authCookies.map((c: { name: any; }) => c.name).join(', '));
       
+      // Pass cookies function directly
       supabase = createRouteHandlerClient({ cookies });
       console.log('[Invitations API] Supabase client created successfully');
     } catch (clientError) {
@@ -761,7 +755,7 @@ export async function PUT(request: NextRequest) {
         console.log('[Invitations API] No active session found - authentication required');
         
         // Check for auth cookies to see if they're available but not valid
-        const cookieStore = await cookies();
+        const cookieStore = cookies();
         const authCookies = cookieStore.getAll().filter((c: { name: string | string[]; }) => c.name.includes('auth'));
         if (authCookies.length > 0) {
           console.log('[Invitations API] Auth cookies present but no valid session - possible token expiration');

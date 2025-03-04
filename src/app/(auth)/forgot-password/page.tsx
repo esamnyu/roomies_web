@@ -2,9 +2,10 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { supabaseClient } from '@/lib/supabase';
+import { useAuth } from '@/context/AuthContext';
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState('');
@@ -14,14 +15,14 @@ export default function ForgotPasswordPage() {
   const [emailSent, setEmailSent] = useState(false);
   
   const router = useRouter();
-  const { status } = useSession();
+  const { user, isLoading } = useAuth();
   
   // Redirect if already authenticated
   useEffect(() => {
-    if (status === 'authenticated') {
+    if (user && !isLoading) {
       router.push('/dashboard');
     }
-  }, [status, router]);
+  }, [user, isLoading, router]);
 
   const validateEmail = (email: string) => {
     // Basic email validation
@@ -42,18 +43,12 @@ export default function ForgotPasswordPage() {
     }
 
     try {
-      // In a real application, this would be an API call to trigger password reset
-      // For example:
-      const response = await fetch('/api/auth/forgot-password', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email }),
+      // Use Supabase Auth for password reset
+      const { error } = await supabaseClient.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/reset-password`,
       });
 
-      // Simulate a successful API response
-      // if (!response.ok) throw new Error('Failed to process your request');
+      if (error) throw error;
       
       // Wait for animation
       await new Promise(resolve => setTimeout(resolve, 600));
@@ -69,7 +64,7 @@ export default function ForgotPasswordPage() {
   };
 
   // If still checking auth status, show loading
-  if (status === 'loading') {
+  if (isLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>

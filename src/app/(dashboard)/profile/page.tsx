@@ -2,12 +2,13 @@
 'use client';
 
 import { useState, useEffect, ChangeEvent } from 'react';
-import { useSession } from 'next-auth/react';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
+import { useAuth } from '@/context/AuthContext';
+import { supabaseClient } from '@/lib/supabase';
 
 export default function ProfilePage() {
-  const { data: session, update: updateSession, status } = useSession();
+  const { user, isLoading } = useAuth();
   const router = useRouter();
   
   const [formData, setFormData] = useState({
@@ -25,17 +26,17 @@ export default function ProfilePage() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   
-  // Initialize form data from session
+  // Initialize form data from user
   useEffect(() => {
-    if (session?.user) {
+    if (user) {
       setFormData({
         ...formData,
-        name: session.user.name || '',
-        email: session.user.email || '',
+        name: user.name || '',
+        email: user.email || '',
       });
-      setAvatar(session.user.image || null);
+      setAvatar(user.avatar || null);
     }
-  }, [session]);
+  }, [user]);
   
   // Handle input changes
   const handleInputChange = (e: ChangeEvent<HTMLInputElement>) => {
@@ -85,33 +86,28 @@ export default function ProfilePage() {
     setSuccess('');
     
     try {
-      // In a real application, this would be an API call to update the user profile
-      // For example:
-      const response = await fetch('/api/users/profile', {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
+      if (!user) throw new Error('User not authenticated');
+      
+      // Update the user metadata in Supabase Auth
+      const { error: updateError } = await supabaseClient.auth.updateUser({
+        data: {
           name: formData.name,
-          email: formData.email,
+        }
+      });
+      
+      if (updateError) throw updateError;
+      
+      // Update the user record in the database
+      const { error: dbError } = await supabaseClient
+        .from('User')
+        .update({
+          name: formData.name,
           avatar: avatar,
-        }),
-      });
+          updatedAt: new Date().toISOString()
+        })
+        .eq('id', user.id);
       
-      // For demo purposes, simulate an API response
-      // if (!response.ok) throw new Error('Failed to update profile');
-      
-      // Update the session with new user info
-      await updateSession({
-        ...session,
-        user: {
-          ...session?.user,
-          name: formData.name,
-          email: formData.email,
-          image: avatar,
-        },
-      });
+      if (dbError) throw dbError;
       
       setSuccess('Profile updated successfully!');
       setIsEditing(false);
@@ -143,21 +139,12 @@ export default function ProfilePage() {
     }
     
     try {
-      // In a real application, this would be an API call to change the password
-      // For example:
-      const response = await fetch('/api/users/password', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          currentPassword: formData.currentPassword,
-          newPassword: formData.newPassword,
-        }),
+      // Update password with Supabase Auth
+      const { error } = await supabaseClient.auth.updateUser({
+        password: formData.newPassword
       });
       
-      // For demo purposes, simulate an API response
-      // if (!response.ok) throw new Error('Current password is incorrect');
+      if (error) throw error;
       
       setSuccess('Password changed successfully!');
       setFormData({
@@ -178,14 +165,21 @@ export default function ProfilePage() {
   const handleDeleteAccount = async () => {
     if (window.confirm('Are you sure you want to delete your account? This action cannot be undone.')) {
       try {
-        // In a real application, this would be an API call to delete the user account
-        // For example:
-        const response = await fetch('/api/users', {
+        if (!user) throw new Error('User not authenticated');
+        
+        // In a real application, you would call an API to handle account deletion
+        // This would need admin/service level access to delete the user
+        const response = await fetch('/api/users/me', {
           method: 'DELETE',
         });
         
-        // For demo purposes, simulate an API response
-        // if (!response.ok) throw new Error('Failed to delete account');
+        if (!response.ok) {
+          const data = await response.json();
+          throw new Error(data.error || 'Failed to delete account');
+        }
+        
+        // Sign out using Supabase Auth
+        await supabaseClient.auth.signOut();
         
         // Redirect to the login page
         router.push('/login');
@@ -195,7 +189,7 @@ export default function ProfilePage() {
     }
   };
   
-  if (status === 'loading') {
+  if (isLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
@@ -264,8 +258,8 @@ export default function ProfilePage() {
                 )}
               </div>
               
-              <h2 className="text-xl font-bold text-gray-900 dark:text-white">{session?.user?.name}</h2>
-              <p className="text-gray-500 dark:text-gray-400">{session?.user?.email}</p>
+              <h2 className="text-xl font-bold text-gray-900 dark:text-white">{user?.name}</h2>
+              <p className="text-gray-500 dark:text-gray-400">{user?.email}</p>
               
               <div className="mt-6 w-full">
                 <div className="space-y-2">
@@ -373,11 +367,12 @@ export default function ProfilePage() {
                         type="email"
                         value={formData.email}
                         onChange={handleInputChange}
-                        readOnly={!isEditing}
-                        className={`w-full px-4 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white ${
-                          isEditing ? 'border-gray-300' : 'border-transparent bg-gray-50 dark:bg-gray-800'
-                        }`}
+                        readOnly={true} // Email can't be changed through profile for Supabase Auth
+                        className={`w-full px-4 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white border-transparent bg-gray-50 dark:bg-gray-800`}
                       />
+                      <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                        Email address cannot be changed directly. Please contact support if you need to change it.
+                      </p>
                     </div>
                     
                     {isEditing && (
@@ -397,21 +392,6 @@ export default function ProfilePage() {
                 /* Password Change Form */
                 <form onSubmit={handlePasswordChange}>
                   <div className="space-y-4">
-                    <div>
-                      <label htmlFor="currentPassword" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                        Current Password
-                      </label>
-                      <input
-                        id="currentPassword"
-                        name="currentPassword"
-                        type="password"
-                        value={formData.currentPassword}
-                        onChange={handleInputChange}
-                        required
-                        className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                      />
-                    </div>
-                    
                     <div>
                       <label htmlFor="newPassword" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                         New Password

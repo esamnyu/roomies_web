@@ -10,11 +10,13 @@ const publicPaths = [
   '/register',
   '/forgot-password',
   '/reset-password',
-  '/auth/callback',  // Add this for Supabase auth callback
+  '/auth/callback',  // Supabase auth callback
+  '/invite',  // For invitation links
   '/api/auth/register',
   '/api/auth/login',
   '/api/auth/forgot-password',
   '/api/auth/reset-password',
+  '/api/invitations',  // Allow checking invitations without auth
 ];
 
 export async function middleware(request: NextRequest) {
@@ -35,10 +37,22 @@ export async function middleware(request: NextRequest) {
   const res = NextResponse.next();
   const supabase = createMiddlewareClient({ req: request, res });
 
-  // Check if user is authenticated
+  // Check if user is authenticated with Supabase
   const {
     data: { session },
   } = await supabase.auth.getSession();
+
+  // Handle session refresh if needed
+  if (session?.expires_at && session.expires_at < Math.floor(Date.now() / 1000)) {
+    // Session is expired, try to refresh it
+    const { data: { session: refreshedSession } } = await supabase.auth.refreshSession();
+    if (!refreshedSession) {
+      // If refresh failed, redirect to login
+      const redirectUrl = new URL('/login', request.url);
+      redirectUrl.searchParams.set('callbackUrl', pathname);
+      return NextResponse.redirect(redirectUrl);
+    }
+  }
 
   // If there's no session and the path is not public, redirect to login
   if (!session && !publicPaths.some(path => pathname.startsWith(path))) {

@@ -5,6 +5,7 @@ import { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { supabaseClient } from '@/lib/supabase';
+import { useAuth } from '@/context/AuthContext';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -20,22 +21,18 @@ export default function LoginPage() {
   // Check if user just registered
   const justRegistered = searchParams.get('registered') === 'true';
   
+  const { user, isLoading } = useAuth();
+  
   // Check authentication status on mount
   useEffect(() => {
-    const checkAuth = async () => {
-      const { data: { session } } = await supabaseClient.auth.getSession();
-      
-      if (session) {
-        // User is already logged in, redirect to dashboard
-        router.push(callbackUrl);
-      } else {
-        // User is not logged in, allow them to see the login page
-        setAuthChecking(false);
-      }
-    };
-    
-    checkAuth();
-  }, [router, callbackUrl]);
+    if (user && !isLoading) {
+      // User is already logged in, redirect to dashboard
+      router.push(callbackUrl);
+    } else if (!isLoading) {
+      // User is not logged in, allow them to see the login page
+      setAuthChecking(false);
+    }
+  }, [user, isLoading, router, callbackUrl]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -63,7 +60,7 @@ export default function LoginPage() {
   };
 
   // If still checking auth status, show loading
-  if (authChecking) {
+  if (authChecking || isLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
