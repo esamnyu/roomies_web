@@ -27,6 +27,7 @@ model User {
   messages       Message[]
   expenseSplits  ExpenseSplit[]
   readReceipts   MessageReadReceipt[]
+  sentInvitations Invitation[]  // New relation to invitations sent by this user
 }
 
 model Household {
@@ -40,6 +41,7 @@ model Household {
   tasks       Task[]
   messages    Message[]
   rules       HouseRule[]
+  invitations Invitation[]   // New relation to invitations for this household
 }
 
 model HouseholdUser {
@@ -189,4 +191,31 @@ model HouseRule {
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
   household       Household  @relation(fields: [householdId], references: [id], onDelete: Cascade)
+}
+
+// New Invitation model and enum
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  EXPIRED
+}
+
+model Invitation {
+  id          String           @id @default(cuid())
+  email       String
+  householdId String
+  inviterId   String
+  role        UserRole         @default(MEMBER)
+  status      InvitationStatus @default(PENDING)
+  message     String?
+  token       String           @unique
+  expiresAt   DateTime
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  
+  household   Household        @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  inviter     User             @relation(fields: [inviterId], references: [id], onDelete: Cascade)
+  
+  @@index([email])
 }
