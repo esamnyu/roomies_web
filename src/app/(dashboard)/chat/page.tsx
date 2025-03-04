@@ -188,16 +188,20 @@ export default function ChatPage() {
 useEffect(() => {
   const checkAuth = async () => {
     try {
+      console.log('Checking authentication status...');
       const { data: { session } } = await supabaseClient.auth.getSession();
       
       if (!session) {
+        console.log('No session found, redirecting to login');
         router.push('/login');
         return;
       }
       
+      console.log('User authenticated:', session.user.id);
       setUser(session.user);
 
       // First, check if the user exists in the User table
+      console.log('Checking if user exists in User table');
       const { data: userData, error: userError } = await supabaseClient
         .from('User')
         .select('id')
@@ -205,7 +209,7 @@ useEffect(() => {
         .single();
       
       if (userError) {
-        console.log('User not found in User table, creating...');
+        console.log('User not found in User table, creating...', userError);
         // Create a user record
         const { data: newUser, error: createUserError } = await supabaseClient
           .from('User')
@@ -229,107 +233,120 @@ useEffect(() => {
         }
         
         console.log('Created user record:', newUser.id);
+      } else {
+        console.log('User found in database:', userData.id);
       }
 
       // Check if database tables are ready
+      console.log('Checking database readiness...');
       const dbStatus = await areAllChatTablesReady();
+      console.log('Database readiness check result:', dbStatus);
       setIsDatabaseReady(dbStatus.ready);
-      console.log('Database status:', dbStatus);
+      
+      // Get user's household
+      console.log('Fetching user household data...');
+      const { data: householdUser, error: householdError } = await supabaseClient
+        .from('HouseholdUser')
+        .select('householdId')
+        .eq('userId', session.user.id)
+        .order('joinedAt', { ascending: false })
+        .limit(1)
+        .single();
+      
+      if (!householdError && householdUser) {
+        console.log('Found household ID:', householdUser.householdId);
+        setHouseholdId(householdUser.householdId);
+      } else {
+        console.log('User has no households or error fetching household:', householdError?.message);
+        console.log('Error details:', householdError);
         
-        // Get user's household
-        const { data: householdUser, error: householdError } = await supabaseClient
-          .from('HouseholdUser')
-          .select('householdId')
-          .eq('userId', session.user.id)
-          .order('joinedAt', { ascending: false })
-          .limit(1)
-          .single();
-        
-        if (!householdError && householdUser) {
-          setHouseholdId(householdUser.householdId);
-          console.log('Found household ID:', householdUser.householdId);
-        } else {
-          console.log('User has no households or error fetching household:', householdError?.message);
+        // Create a new household and associate it with the user (for testing only)
+        try {
+          console.log('Creating test household for user:', session.user.id);
           
-          // Create a new household and associate it with the user (for testing only)
-          try {
-            console.log('Creating test household for user:', session.user.id);
-            
-            // Generate a UUID for the new household
-            const householdUUID = generateUUID();
-            console.log('Generated UUID for new household:', householdUUID);
-            
-            // 1. Create a new household with explicit UUID
-            const { data: newHousehold, error: createError } = await supabaseClient
-              .from('Household')
-              .insert([
-                {
-                  id: householdUUID,
-                  name: 'Test Household',
-                  address: 'Test Address',
-                  createdAt: new Date().toISOString(),
-                  updatedAt: new Date().toISOString()
-                }
-              ])
-              .select('id')
-              .single();
-            
-            if (createError || !newHousehold) {
-              console.error('Error creating test household:', createError);
-              setLoading(false);
-              return;
-            }
-            
-            // 2. Associate the user with the new household
-            const householdUserUUID = generateUUID(); // Generate a UUID for the HouseholdUser
-            const { data: newMembership, error: memberError } = await supabaseClient
-              .from('HouseholdUser')
-              .insert([
-                {
-                  id: householdUserUUID, // Add this line to provide an ID
-                  userId: session.user.id,
-                  householdId: newHousehold.id,
-                  role: 'ADMIN',
-                  joinedAt: new Date().toISOString()
-                }
-              ])
-              .select()
-              .single();
-            
-            if (memberError) {
-              console.error('Error creating household membership:', memberError);
-              setLoading(false);
-              return;
-            }
-            
-            console.log('Created test household with ID:', newHousehold.id);
-            setHouseholdId(newHousehold.id);
-          } catch (err) {
-            console.error('Error in household creation process:', err);
+          // Generate a UUID for the new household
+          const householdUUID = generateUUID();
+          console.log('Generated UUID for new household:', householdUUID);
+          
+          // 1. Create a new household with explicit UUID
+          const { data: newHousehold, error: createError } = await supabaseClient
+            .from('Household')
+            .insert([
+              {
+                id: householdUUID,
+                name: 'Test Household',
+                address: 'Test Address',
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+              }
+            ])
+            .select('id')
+            .single();
+          
+          if (createError || !newHousehold) {
+            console.error('Error creating test household:', createError);
+            setLoading(false);
+            return;
           }
+          
+          // 2. Associate the user with the new household
+          const householdUserUUID = generateUUID(); // Generate a UUID for the HouseholdUser
+          const { data: newMembership, error: memberError } = await supabaseClient
+            .from('HouseholdUser')
+            .insert([
+              {
+                id: householdUserUUID, // Add this line to provide an ID
+                userId: session.user.id,
+                householdId: newHousehold.id,
+                role: 'ADMIN',
+                joinedAt: new Date().toISOString()
+              }
+            ])
+            .select()
+            .single();
+          
+          if (memberError) {
+            console.error('Error creating household membership:', memberError);
+            setLoading(false);
+            return;
+          }
+          
+          console.log('Created test household with ID:', newHousehold.id);
+          setHouseholdId(newHousehold.id);
+        } catch (err) {
+          console.error('Error in household creation process:', err);
         }
-        
-        setLoading(false);
-      } catch (error) {
-        console.error('Authentication error:', error);
-        router.push('/login');
       }
-    };
+      
+      console.log('Initialization complete: isDatabaseReady =', dbStatus.ready, 'householdId =', householdId || '(pending)');
+      setLoading(false);
+    } catch (error) {
+      console.error('Authentication error:', error);
+      router.push('/login');
+    }
+  };
 
-    checkAuth();
-  }, [router]);
+  checkAuth();
+}, [router]);
 
 // In the useEffect where you load messages
 useEffect(() => {
   if (!user) return;
   
   const loadMessages = async () => {
+    console.log('Loading messages with:', {
+      isDatabaseReady,
+      activeConversation,
+      householdId,
+      useRealDb: isDatabaseReady && activeConversation === 'household' && householdId
+    });
+    
     if (isDatabaseReady && activeConversation === 'household' && householdId) {
       console.log('Loading messages for household:', householdId);
       // Use real database data
       try {
         const messageData = await getHouseholdMessages(householdId);
-        console.log('Messages loaded:', messageData);
+        console.log('Messages loaded from database:', messageData.length);
         setMessages(messageData);
         
         // Mark messages as read
@@ -341,6 +358,7 @@ useEffect(() => {
       } catch (error) {
         console.error('Error loading messages:', error);
         // Fallback to mock data if there's an error
+        console.log('Falling back to mock data due to error');
         if (activeConversation in MOCK_CONVERSATIONS) {
           setMessages(MOCK_CONVERSATIONS[activeConversation].messages);
         } else {
@@ -402,13 +420,19 @@ useEffect(() => {
     setIsSending(true);
     
     try {
-      if (isDatabaseReady && activeConversation === 'household' && householdId) {
-        console.log('Sending real message to database');
+      // Always ensure activeConversation is set to 'household' for database messages
+      // This fixes the issue where activeConversation might be set to '3' in the logs
+      if (isDatabaseReady && householdId) {
+        console.log('Sending real message to database for household:', householdId);
         // Use real database
         const result = await sendMessage(householdId, user.id, content);
         console.log('Message send result:', result);
       } else {
-        console.log('Using mock data approach for message');
+        console.log('Using mock data approach for message. Reason:', 
+          !isDatabaseReady ? 'Database not ready' : 
+          !householdId ? 'No household ID' : 
+          `Conversation is ${activeConversation}, not 'household'`
+        );
         // Use mock data approach
         const message = {
           id: `new-${Date.now()}`,
@@ -448,6 +472,18 @@ useEffect(() => {
     return messageDate.toLocaleDateString();
   };
   
+  // Helper function to handle conversation selection and always use household for real database
+  const handleConversationSelect = (conversationId: string) => {
+    setActiveConversation(conversationId);
+    setIsMobileMenuOpen(false);
+    
+    // Log current state for debugging
+    console.log('Selected conversation:', conversationId, 
+      'isDatabaseReady:', isDatabaseReady, 
+      'householdId:', householdId
+    );
+  };
+  
   // If still checking auth status, show loading
   if (loading) {
     return (
@@ -457,8 +493,23 @@ useEffect(() => {
     );
   }
 
+  // Display current state in UI for debugging
+  const debugInfo = {
+    isDatabaseReady,
+    householdId,
+    activeConversation,
+    userId: user?.id,
+  };
+
   return (
     <div className="flex h-[calc(100vh-theme(spacing.16))] md:h-[calc(100vh-theme(spacing.8))] overflow-hidden bg-gray-50 dark:bg-gray-900">
+      {/* Debug info (only visible during development) */}
+      {process.env.NODE_ENV === 'development' && (
+        <div className="fixed top-0 right-0 bg-black bg-opacity-70 text-white p-2 text-xs z-50">
+          <pre>{JSON.stringify(debugInfo, null, 2)}</pre>
+        </div>
+      )}
+      
       {/* Mobile sidebar button */}
       <div className="md:hidden fixed top-16 left-4 z-30">
         <button
@@ -496,10 +547,7 @@ useEffect(() => {
         <div className="flex-1 overflow-y-auto">
           <div className="p-2">
             <button
-              onClick={() => {
-                setActiveConversation('household');
-                setIsMobileMenuOpen(false);
-              }}
+              onClick={() => handleConversationSelect('household')}
               className={`
                 w-full flex items-center p-3 rounded-lg mb-1 
                 ${activeConversation === 'household' 
@@ -554,10 +602,7 @@ useEffect(() => {
                 {MOCK_MEMBERS.filter(m => m.id !== (user?.id || '1')).map(member => (
                   <button
                     key={member.id}
-                    onClick={() => {
-                      setActiveConversation(member.id);
-                      setIsMobileMenuOpen(false);
-                    }}
+                    onClick={() => handleConversationSelect(member.id)}
                     className={`
                       w-full flex items-center p-3 rounded-lg mb-1 
                       ${activeConversation === member.id 
@@ -812,4 +857,3 @@ useEffect(() => {
  </div>
 );
 }
-                    
