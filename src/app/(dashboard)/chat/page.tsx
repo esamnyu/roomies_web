@@ -200,50 +200,111 @@ useEffect(() => {
       console.log('User authenticated:', session.user.id);
       setUser(session.user);
 
-      // First, check if the user exists in the User table
-      console.log('Checking if user exists in User table');
-      const { data: userData, error: userError } = await supabaseClient
+      // Step 1: Check if the user exists in the User table by ID
+      console.log('Checking if user exists in User table by ID');
+      const { data: userDataById, error: userIdError } = await supabaseClient
         .from('User')
-        .select('id')
+        .select('id, email')
         .eq('id', session.user.id)
         .single();
       
-      if (userError) {
-        console.log('User not found in User table, creating...', userError);
-        // Create a user record
-        const { data: newUser, error: createUserError } = await supabaseClient
+      // Step 2: If user doesn't exist by ID, check if exists by email
+      if (userIdError) {
+        console.log('User not found by ID, checking by email...', userIdError);
+        
+        // Check if user exists with the same email
+        const { data: userDataByEmail, error: emailError } = await supabaseClient
           .from('User')
-          .insert([
-            {
-              id: session.user.id,
-              email: session.user.email,
-              name: session.user.user_metadata?.name || session.user.email?.split('@')[0] || 'User',
-              password: 'MANAGED_BY_SUPABASE_AUTH',
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString()
+          .select('id, email')
+          .eq('email', session.user.email)
+          .maybeSingle();
+        
+        if (!emailError && userDataByEmail) {
+          // User exists with this email but different ID - update the ID
+          console.log('Found user with same email but different ID. Updating ID...');
+          
+          const { error: updateError } = await supabaseClient
+            .from('User')
+            .update({ id: session.user.id })
+            .eq('email', session.user.email);
+          
+          if (updateError) {
+            console.error('Error updating user ID:', updateError);
+            // Continue anyway - we'll try to work with what we have
+          } else {
+            console.log('Successfully updated user ID');
+          }
+        } else {
+          // User doesn't exist at all - create them
+          console.log('User not found by email either, creating new user...');
+          
+          try {
+            // Create a user record
+            const { data: newUser, error: createUserError } = await supabaseClient
+              .from('User')
+              .insert([
+                {
+                  id: session.user.id,
+                  email: session.user.email,
+                  name: session.user.user_metadata?.name || session.user.email?.split('@')[0] || 'User',
+                  password: 'MANAGED_BY_SUPABASE_AUTH',
+                  createdAt: new Date().toISOString(),
+                  updatedAt: new Date().toISOString()
+                }
+              ])
+              .select('id')
+              .single();
+            
+            if (createUserError) {
+              // Handle the case where we couldn't create a user (could be duplicate key, etc)
+              console.error('Error creating user record:', createUserError);
+              
+              // If it's a duplicate key error, try one more time with a modified email
+              if (createUserError.code === '23505' && createUserError.details?.includes('User_email_key')) {
+                console.log('Attempting to create user with modified email to avoid unique constraint...');
+                
+                const randomSuffix = Math.floor(Math.random() * 10000);
+                const modifiedEmail = `${session.user.email?.split('@')[0]}_${randomSuffix}@${session.user.email?.split('@')[1]}`;
+                
+                const { data: newUserRetry, error: retryError } = await supabaseClient
+                  .from('User')
+                  .insert([
+                    {
+                      id: session.user.id,
+                      email: modifiedEmail, // Use modified email to avoid unique constraint
+                      name: session.user.user_metadata?.name || session.user.email?.split('@')[0] || 'User',
+                      password: 'MANAGED_BY_SUPABASE_AUTH',
+                      createdAt: new Date().toISOString(),
+                      updatedAt: new Date().toISOString()
+                    }
+                  ])
+                  .select('id')
+                  .single();
+                
+                if (retryError) {
+                  console.error('Final error creating user record:', retryError);
+                } else {
+                  console.log('Created user record with modified email:', newUserRetry.id);
+                }
+              }
+            } else {
+              console.log('Created user record:', newUser.id);
             }
-          ])
-          .select('id')
-          .single();
-        
-        if (createUserError) {
-          console.error('Error creating user record:', createUserError);
-          setLoading(false);
-          return;
+          } catch (err) {
+            console.error('Unexpected error creating user:', err);
+          }
         }
-        
-        console.log('Created user record:', newUser.id);
       } else {
-        console.log('User found in database:', userData.id);
+        console.log('User found in database:', userDataById.id);
       }
 
-      // Check if database tables are ready
+      // Step 3: Check if database tables are ready
       console.log('Checking database readiness...');
       const dbStatus = await areAllChatTablesReady();
       console.log('Database readiness check result:', dbStatus);
       setIsDatabaseReady(dbStatus.ready);
       
-      // Get user's household
+      // Step 4: Get user's household
       console.log('Fetching user household data...');
       const { data: householdUser, error: householdError } = await supabaseClient
         .from('HouseholdUser')
@@ -260,7 +321,7 @@ useEffect(() => {
         console.log('User has no households or error fetching household:', householdError?.message);
         console.log('Error details:', householdError);
         
-        // Create a new household and associate it with the user (for testing only)
+        // Step 5: Create a new household if the user doesn't have one
         try {
           console.log('Creating test household for user:', session.user.id);
           
@@ -285,34 +346,32 @@ useEffect(() => {
           
           if (createError || !newHousehold) {
             console.error('Error creating test household:', createError);
-            setLoading(false);
-            return;
+          } else {
+            console.log('Created new household:', newHousehold.id);
+            
+            // 2. Associate the user with the new household
+            const householdUserUUID = generateUUID(); // Generate a UUID for the HouseholdUser
+            const { data: newMembership, error: memberError } = await supabaseClient
+              .from('HouseholdUser')
+              .insert([
+                {
+                  id: householdUserUUID,
+                  userId: session.user.id,
+                  householdId: newHousehold.id,
+                  role: 'ADMIN',
+                  joinedAt: new Date().toISOString()
+                }
+              ])
+              .select()
+              .single();
+            
+            if (memberError) {
+              console.error('Error creating household membership:', memberError);
+            } else {
+              console.log('Created household membership:', newMembership.id);
+              setHouseholdId(newHousehold.id);
+            }
           }
-          
-          // 2. Associate the user with the new household
-          const householdUserUUID = generateUUID(); // Generate a UUID for the HouseholdUser
-          const { data: newMembership, error: memberError } = await supabaseClient
-            .from('HouseholdUser')
-            .insert([
-              {
-                id: householdUserUUID, // Add this line to provide an ID
-                userId: session.user.id,
-                householdId: newHousehold.id,
-                role: 'ADMIN',
-                joinedAt: new Date().toISOString()
-              }
-            ])
-            .select()
-            .single();
-          
-          if (memberError) {
-            console.error('Error creating household membership:', memberError);
-            setLoading(false);
-            return;
-          }
-          
-          console.log('Created test household with ID:', newHousehold.id);
-          setHouseholdId(newHousehold.id);
         } catch (err) {
           console.error('Error in household creation process:', err);
         }
