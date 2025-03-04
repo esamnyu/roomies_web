@@ -6,6 +6,7 @@ import { useSearchParams } from 'next/navigation';
 import HouseholdInfo from '@/components/dashboard/HouseholdInfo';
 import MemberGrid from '@/components/dashboard/MemberGrid';
 import Link from 'next/link';
+import InviteModal from '@/components/invitations/InviteModal';
 
 // Mock data for demonstration
 const MOCK_HOUSEHOLD = {
@@ -75,6 +76,7 @@ export default function DashboardPage() {
   const [inviteRole, setInviteRole] = useState('MEMBER');
   const [inviteMessage, setInviteMessage] = useState('');
   const [showWelcomeMessage, setShowWelcomeMessage] = useState(false);
+  const [currentHouseholdId, setCurrentHouseholdId] = useState('1'); // Update to fetch from API later
   
   const searchParams = useSearchParams();
   
@@ -303,122 +305,12 @@ export default function DashboardPage() {
         onInvite={() => setShowInviteModal(true)} 
       />
 
-      {/* Invite Modal - This would be a proper component in a real app */}
+      {/* Invite Modal - Using the new component */}
       {showInviteModal && (
-        <div className="fixed inset-0 z-50 overflow-y-auto">
-          <div className="flex items-center justify-center min-h-screen px-4">
-            <div className="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" onClick={() => setShowInviteModal(false)} />
-            
-            <div className="relative bg-white dark:bg-gray-800 rounded-lg max-w-md w-full p-6 shadow-xl">
-              <div className="absolute top-0 right-0 pt-4 pr-4">
-                <button
-                  type="button"
-                  className="bg-white dark:bg-gray-800 rounded-md text-gray-400 hover:text-gray-500 dark:hover:text-gray-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                  onClick={() => setShowInviteModal(false)}
-                >
-                  <span className="sr-only">Close</span>
-                  <svg 
-                    className="h-6 w-6" 
-                    fill="none" 
-                    viewBox="0 0 24 24" 
-                    stroke="currentColor" 
-                    aria-hidden="true"
-                  >
-                    <path 
-                      strokeLinecap="round" 
-                      strokeLinejoin="round" 
-                      strokeWidth="2" 
-                      d="M6 18L18 6M6 6l12 12" 
-                    />
-                  </svg>
-                </button>
-              </div>
-              
-              <div className="mt-3 text-center sm:mt-0 sm:text-left">
-                <h3 className="text-lg font-medium leading-6 text-gray-900 dark:text-white">
-                  Invite a Roommate
-                </h3>
-                <div className="mt-2">
-                  <p className="text-sm text-gray-500 dark:text-gray-400">
-                    Send an invitation to join your household. They'll receive an email with instructions.
-                  </p>
-                </div>
-              </div>
-              
-              <form onSubmit={handleInviteSubmit} className="mt-5 space-y-4">
-                <div>
-                  <label 
-                    htmlFor="email" 
-                    className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
-                  >
-                    Email Address
-                  </label>
-                  <input
-                    id="email"
-                    type="email"
-                    value={inviteEmail}
-                    onChange={(e) => setInviteEmail(e.target.value)}
-                    placeholder="Enter their email"
-                    required
-                    className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                  />
-                </div>
-                
-                <div>
-                  <label 
-                    htmlFor="role" 
-                    className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
-                  >
-                    Role
-                  </label>
-                  <select
-                    id="role"
-                    value={inviteRole}
-                    onChange={(e) => setInviteRole(e.target.value)}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                  >
-                    <option value="ADMIN">Admin</option>
-                    <option value="MEMBER">Member</option>
-                    <option value="GUEST">Guest</option>
-                  </select>
-                </div>
-                
-                <div>
-                  <label 
-                    htmlFor="message" 
-                    className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
-                  >
-                    Personal Message (Optional)
-                  </label>
-                  <textarea
-                    id="message"
-                    value={inviteMessage}
-                    onChange={(e) => setInviteMessage(e.target.value)}
-                    placeholder="Add a personal message..."
-                    rows={3}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                  />
-                </div>
-                
-                <div className="flex justify-end mt-6 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setShowInviteModal(false)}
-                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md shadow-sm hover:bg-gray-50 dark:bg-gray-700 dark:text-gray-300 dark:border-gray-600 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                  >
-                    Send Invitation
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        </div>
+        <InviteModal 
+          householdId={currentHouseholdId}
+          onClose={() => setShowInviteModal(false)}
+        />
       )}
     </div>
   );
