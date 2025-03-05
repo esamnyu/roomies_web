@@ -1,5 +1,7 @@
 // src/app/api/invitations/route.ts
 import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "@/app/api/auth/[...nextauth]/route"; // Adjust path if needed
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { cookies } from 'next/headers';
 import { randomBytes } from 'crypto';
@@ -19,12 +21,18 @@ export async function GET(request: NextRequest) {
     console.log('[Invitations API] Request path:', request.nextUrl.pathname);
     console.log('[Invitations API] Request method:', request.method);
     
-    // Create a Supabase client with detailed error catching
+    // Get Next-Auth session for authentication
+    const session = await getServerSession(authOptions);
+    
+    if (!session || !session.user) {
+      console.log('[Invitations API] No active session found');
+      return NextResponse.json({ error: 'Unauthorized - please log in' }, { status: 401 });
+    }
+    
+    // Create a Supabase client for database operations only
     let supabase;
     try {
       console.log('[Invitations API] Initializing Supabase client');
-      
-      // Pass cookies function directly to createRouteHandlerClient
       supabase = createRouteHandlerClient({ cookies });
       console.log('[Invitations API] Supabase client created successfully');
     } catch (clientError) {
@@ -35,51 +43,9 @@ export async function GET(request: NextRequest) {
       }, { status: 500 });
     }
     
-    // Get the current user's session with detailed logging
-    console.log('[Invitations API] Getting auth session');
-    let session;
-    try {
-      const { data, error } = await supabase.auth.getSession();
-      
-      if (error) {
-        console.error('[Invitations API] Error getting session:', error);
-        console.error('[Invitations API] Error details:', error.message);
-        return NextResponse.json({ 
-          error: 'Authentication error', 
-          details: error.message 
-        }, { status: 401 });
-      }
-      
-      console.log('[Invitations API] Session data retrieved successfully');
-      console.log('[Invitations API] Session exists:', !!data.session);
-      
-      session = data.session;
-      
-      if (!session) {
-        console.log('[Invitations API] No active session found');
-        
-        // Check for auth cookies again to see if they're available but not valid
-        const cookieStore = cookies();
-        const authCookies = cookieStore.getAll().filter((c: { name: string | string[]; }) => c.name.includes('auth'));
-        if (authCookies.length > 0) {
-          console.log('[Invitations API] Auth cookies present but no valid session - possible token expiration');
-        } else {
-          console.log('[Invitations API] No auth cookies found - user is not logged in');
-        }
-        
-        return NextResponse.json({ error: 'Unauthorized - please log in' }, { status: 401 });
-      }
-      
-      // Log successful authentication
-      console.log('[Invitations API] User authenticated successfully:', session.user.id);
-      console.log('[Invitations API] User email:', session.user.email);
-    } catch (sessionError) {
-      console.error('[Invitations API] Critical error getting session:', sessionError);
-      return NextResponse.json({ 
-        error: 'Session retrieval error',
-        details: sessionError instanceof Error ? sessionError.message : 'Unknown session error'
-      }, { status: 500 });
-    }
+    // Log successful authentication from Next-Auth
+    console.log('[Invitations API] User authenticated successfully with Next-Auth');
+    console.log('[Invitations API] User email:', session.user.email);
     
     // Get query parameters
     const { searchParams } = new URL(request.url);
@@ -184,7 +150,7 @@ export async function GET(request: NextRequest) {
       // Get invitations for the current user
       console.log('[Invitations API] Fetching invitations for current user email:', session.user.email);
       query = query
-        .eq('email', session.user.email)
+        .eq('email', session.user.email || '')
         .eq('status', status);
     }
     
@@ -220,82 +186,30 @@ export async function POST(request: NextRequest) {
     console.log('[Invitations API] Request path:', request.nextUrl.pathname);
     console.log('[Invitations API] Request headers:', JSON.stringify([...request.headers.entries()]));
     
-    // Log before creating Supabase client
-    console.log('[Invitations API] Creating Supabase client - Starting');
+    // Get Next-Auth session for authentication
+    console.log('[Invitations API] Getting Next-Auth session');
+    const session = await getServerSession(authOptions);
     
-    try {
-      // Check cookies are accessible
-      const cookieStore = cookies();
-      const allCookies = cookieStore.getAll();
-      console.log('[Invitations API] Available cookies count:', allCookies.length);
-      console.log('[Invitations API] Cookie names available:', allCookies.map((c: { name: any; }) => c.name).join(', '));
-      
-      // Look specifically for Supabase auth cookies
-      const authCookies = allCookies.filter((c: { name: string | string[]; }) => c.name.includes('auth'));
-      console.log('[Invitations API] Auth cookie names:', authCookies.map((c: { name: any; }) => c.name).join(', '));
-    } catch (cookieError) {
-      console.error('[Invitations API] Error accessing cookies:', cookieError);
+    if (!session || !session.user) {
+      console.log('[Invitations API] No active Next-Auth session found');
+      return NextResponse.json({ error: 'Unauthorized - please log in' }, { status: 401 });
     }
     
-    // Create Supabase client with detailed error catching
+    // Log successful authentication from Next-Auth
+    console.log('[Invitations API] User authenticated successfully with Next-Auth:', session.user.id);
+    console.log('[Invitations API] User email:', session.user.email);
+    
+    // Create Supabase client for database operations
     let supabase;
     try {
-      console.log('[Invitations API] Initializing Supabase client with createRouteHandlerClient');
-      // Pass cookies function directly
+      console.log('[Invitations API] Initializing Supabase client');
       supabase = createRouteHandlerClient({ cookies });
       console.log('[Invitations API] Supabase client created successfully');
     } catch (clientError) {
       console.error('[Invitations API] Failed to create Supabase client:', clientError);
       return NextResponse.json({ 
-        error: 'Failed to initialize authentication client',
+        error: 'Failed to initialize database client',
         details: clientError instanceof Error ? clientError.message : 'Unknown client error'
-      }, { status: 500 });
-    }
-    
-    // Get session with detailed logging
-    console.log('[Invitations API] Getting auth session - Starting');
-    let session;
-    try {
-      const { data, error } = await supabase.auth.getSession();
-      
-      if (error) {
-        console.error('[Invitations API] Error getting session:', error);
-        console.error('[Invitations API] Error details:', error.message);
-        return NextResponse.json({ 
-          error: 'Authentication error', 
-          details: error.message 
-        }, { status: 401 });
-      }
-      
-      console.log('[Invitations API] Session data retrieved successfully');
-      console.log('[Invitations API] Session exists:', !!data.session);
-      
-      session = data.session;
-      
-      if (!session) {
-        console.log('[Invitations API] No active session found');
-        
-        // Check for auth cookies again to see if they're available but not valid
-        const cookieStore = cookies();
-        const authCookies = cookieStore.getAll().filter((c: { name: string | string[]; }) => c.name.includes('auth'));
-        if (authCookies.length > 0) {
-          console.log('[Invitations API] Auth cookies present but no valid session - possible token expiration');
-        } else {
-          console.log('[Invitations API] No auth cookies found - user is not logged in');
-        }
-        
-        return NextResponse.json({ error: 'Unauthorized - please log in' }, { status: 401 });
-      }
-      
-      // Log successful authentication
-      console.log('[Invitations API] User authenticated successfully:', session.user.id);
-      console.log('[Invitations API] User email:', session.user.email);
-      console.log('[Invitations API] Session expires at:', new Date(session.expires_at! * 1000).toISOString());
-    } catch (sessionError) {
-      console.error('[Invitations API] Critical error getting session:', sessionError);
-      return NextResponse.json({ 
-        error: 'Session retrieval error',
-        details: sessionError instanceof Error ? sessionError.message : 'Unknown session error'
       }, { status: 500 });
     }
     
@@ -518,11 +432,18 @@ export async function PATCH(request: NextRequest) {
     
     console.log('[Invitations API] Processing invitation ID:', invitationId);
     
-    // Create Supabase client
+    // Get Next-Auth session for authentication
+    const session = await getServerSession(authOptions);
+    
+    if (!session || !session.user) {
+      console.log('[Invitations API] No active Next-Auth session found');
+      return NextResponse.json({ error: 'Unauthorized - please log in' }, { status: 401 });
+    }
+    
+    // Create Supabase client for database operations
     let supabase;
     try {
       console.log('[Invitations API] Initializing Supabase client');
-      // Pass cookies function directly
       supabase = createRouteHandlerClient({ cookies });
       console.log('[Invitations API] Supabase client created successfully');
     } catch (clientError) {
@@ -531,31 +452,6 @@ export async function PATCH(request: NextRequest) {
         error: 'Failed to initialize client',
         details: clientError instanceof Error ? clientError.message : 'Unknown client error'
       }, { status: 500 });
-    }
-    
-    // Get the current user's session
-    console.log('[Invitations API] Getting auth session');
-    let session;
-    try {
-      const { data, error } = await supabase.auth.getSession();
-      
-      if (error) {
-        console.error('[Invitations API] Error getting session:', error);
-        return NextResponse.json({ error: 'Authentication error' }, { status: 401 });
-      }
-      
-      session = data.session;
-      console.log('[Invitations API] Session exists:', !!session);
-      
-      if (!session) {
-        console.log('[Invitations API] No active session found');
-        return NextResponse.json({ error: 'Unauthorized - please log in' }, { status: 401 });
-      }
-      
-      console.log('[Invitations API] User authenticated successfully:', session.user.id);
-    } catch (sessionError) {
-      console.error('[Invitations API] Error getting session:', sessionError);
-      return NextResponse.json({ error: 'Session retrieval error' }, { status: 500 });
     }
     
     // Get the request body
@@ -707,22 +603,18 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'Missing invitation token' }, { status: 400 });
     }
     
-    // Create Supabase client with detailed error catching
+    // Get Next-Auth session for authentication
+    const session = await getServerSession(authOptions);
+    
+    if (!session || !session.user) {
+      console.log('[Invitations API] No active Next-Auth session found');
+      return NextResponse.json({ error: 'Unauthorized - please log in' }, { status: 401 });
+    }
+    
+    // Create Supabase client for database operations
     let supabase;
     try {
       console.log('[Invitations API] Initializing Supabase client');
-      
-      // Check cookies are accessible
-      const cookieStore = cookies();
-      const allCookies = cookieStore.getAll();
-      console.log('[Invitations API] Available cookies count:', allCookies.length);
-      console.log('[Invitations API] Cookie names available:', allCookies.map((c: { name: any; }) => c.name).join(', '));
-      
-      // Look specifically for Supabase auth cookies
-      const authCookies = allCookies.filter((c: { name: string | string[]; }) => c.name.includes('auth'));
-      console.log('[Invitations API] Auth cookie names:', authCookies.map((c: { name: any; }) => c.name).join(', '));
-      
-      // Pass cookies function directly
       supabase = createRouteHandlerClient({ cookies });
       console.log('[Invitations API] Supabase client created successfully');
     } catch (clientError) {
@@ -733,72 +625,28 @@ export async function PUT(request: NextRequest) {
       }, { status: 500 });
     }
     
-    // Get the current user's session with detailed logging
-    console.log('[Invitations API] Getting auth session');
-    let session;
-    try {
-      const { data, error } = await supabase.auth.getSession();
-      
-      if (error) {
-        console.error('[Invitations API] Error getting session:', error);
-        console.error('[Invitations API] Error details:', error.message);
-        return NextResponse.json({ 
-          error: 'Authentication error', 
-          details: error.message 
-        }, { status: 401 });
-      }
-      
-      session = data.session;
-      console.log('[Invitations API] Session exists:', !!session);
-      
-      if (!session) {
-        console.log('[Invitations API] No active session found - authentication required');
-        
-        // Check for auth cookies to see if they're available but not valid
-        const cookieStore = cookies();
-        const authCookies = cookieStore.getAll().filter((c: { name: string | string[]; }) => c.name.includes('auth'));
-        if (authCookies.length > 0) {
-          console.log('[Invitations API] Auth cookies present but no valid session - possible token expiration');
-        } else {
-          console.log('[Invitations API] No auth cookies found - user is not logged in');
-        }
-        
-        return NextResponse.json({ error: 'Authentication required to accept invitation' }, { status: 401 });
-      }
-      
-      // Log successful authentication
-      console.log('[Invitations API] User authenticated successfully:', session.user.id);
-      console.log('[Invitations API] User email:', session.user.email);
-    } catch (sessionError) {
-      console.error('[Invitations API] Critical error getting session:', sessionError);
-      return NextResponse.json({ 
-        error: 'Session retrieval error',
-        details: sessionError instanceof Error ? sessionError.message : 'Unknown session error'
-      }, { status: 500 });
-    }
+    // Log successful authentication
+    console.log('[Invitations API] User authenticated successfully with Next-Auth:', session.user.id);
+    console.log('[Invitations API] User email:', session.user.email);
     
+    // Find the invitation by token
+    console.log('[Invitations API] Looking up invitation by token');
     try {
-      // Get the invitation details
-      console.log('[Invitations API] Looking up invitation by token');
-      const { data: invitation, error: inviteError } = await supabase
+      const { data: invitation, error: fetchError } = await supabase
         .from('Invitation')
         .select('*')
         .eq('token', tokenParam)
         .single();
-        
-      if (inviteError || !invitation) {
-        console.error('[Invitations API] Error looking up invitation:', inviteError);
-        console.error('[Invitations API] Error details:', inviteError?.message);
+      
+      if (fetchError || !invitation) {
+        console.error('[Invitations API] Error fetching invitation:', fetchError);
         return NextResponse.json({ error: 'Invalid or expired invitation token' }, { status: 404 });
       }
       
       console.log('[Invitations API] Found invitation:', invitation.id);
-      console.log('[Invitations API] Invitation details:', {
-        email: invitation.email,
-        householdId: invitation.householdId,
-        status: invitation.status,
-        role: invitation.role
-      });
+      console.log('[Invitations API] Invitation status:', invitation.status);
+      console.log('[Invitations API] Invitation email:', invitation.email);
+      console.log('[Invitations API] Invitation household:', invitation.householdId);
       
       // Check if the invitation has expired
       const now = new Date();
@@ -812,7 +660,7 @@ export async function PUT(request: NextRequest) {
         return NextResponse.json({ error: 'Invitation has expired' }, { status: 410 });
       }
       
-      // Check if the invitation is still pending
+      // Check if the invitation has already been used or cancelled
       if (invitation.status !== 'PENDING') {
         console.log('[Invitations API] Invitation is not pending - status:', invitation.status);
         return NextResponse.json({ 
@@ -820,103 +668,108 @@ export async function PUT(request: NextRequest) {
         }, { status: 410 });
       }
       
-      // Check if the logged-in user's email matches the invitation email
-      console.log('[Invitations API] Checking if user email matches invitation email');
-      console.log('[Invitations API] User email:', session.user.email);
-      console.log('[Invitations API] Invitation email:', invitation.email);
-      
-      if (!session.user.email || session.user.email.toLowerCase() !== invitation.email.toLowerCase()) {
+      // Check if the user's email matches the invitation email
+      const userEmail = session.user.email || '';
+      if (invitation.email.toLowerCase() !== userEmail.toLowerCase()) {
         console.log('[Invitations API] Email mismatch - access denied');
+        console.log('[Invitations API] Invitation email:', invitation.email);
+        console.log('[Invitations API] User email:', userEmail);
         return NextResponse.json({ 
-          error: 'You can only accept invitations sent to your email address' 
+          error: 'This invitation was sent to a different email address'
         }, { status: 403 });
       }
       
-      console.log('[Invitations API] Email match confirmed - proceeding with acceptance');
+      // Try to get any existing household membership
+      const { data: existingMembership, error: membershipError } = await supabase
+        .from('HouseholdUser')
+        .select('id, role')
+        .eq('userId', session.user.id)
+        .eq('householdId', invitation.householdId)
+        .maybeSingle();
       
-      // Begin a transaction - add user to household and update invitation status
-      console.log('[Invitations API] Adding user to household');
-      try {
-        const householdUserId = generateUUID();
+      if (existingMembership) {
+        console.log('[Invitations API] User is already a member of this household');
         
-        const { error: memberError } = await supabase
-          .from('HouseholdUser')
-          .insert([{
-            id: householdUserId,
-            userId: session.user.id,
-            householdId: invitation.householdId,
-            role: invitation.role,
-            joinedAt: new Date().toISOString()
-          }]);
-          
-        if (memberError) {
-          console.error('[Invitations API] Error adding user to household:', memberError);
-          console.error('[Invitations API] Error code:', memberError.code);
-          
-          if (memberError.code === '23505') { // Unique constraint violation
-            console.log('[Invitations API] User is already a member of this household');
-            
-            // Update invitation status to avoid repeat attempts
-            console.log('[Invitations API] Updating invitation status to ACCEPTED anyway');
-            await supabase
-              .from('Invitation')
-              .update({ 
-                status: 'ACCEPTED', 
-                updatedAt: new Date().toISOString(),
-                respondedAt: new Date().toISOString()
-              })
-              .eq('id', invitation.id);
-              
-            return NextResponse.json({ 
-              error: 'You are already a member of this household' 
-            }, { status: 409 });
-          }
-          
-          return NextResponse.json({ 
-            error: 'Failed to add you to the household',
-            details: memberError.message
-          }, { status: 500 });
-        }
-        
-        console.log('[Invitations API] User successfully added to household');
-      } catch (membershipError) {
-        console.error('[Invitations API] Error in household membership operation:', membershipError);
-        return NextResponse.json({ error: 'Error processing household membership' }, { status: 500 });
-      }
-      
-      // Update invitation status
-      console.log('[Invitations API] Updating invitation status to ACCEPTED');
-      try {
+        // Update the invitation status to ACCEPTED since we're effectively accepting it
         const { error: updateError } = await supabase
           .from('Invitation')
           .update({ 
             status: 'ACCEPTED', 
-            updatedAt: new Date().toISOString(),
-            respondedAt: new Date().toISOString()
+            updatedAt: now.toISOString(),
+            respondedAt: now.toISOString()
           })
           .eq('id', invitation.id);
-          
+        
         if (updateError) {
           console.error('[Invitations API] Error updating invitation status:', updateError);
-          // Continue anyway as the user has been added to the household
-        } else {
-          console.log('[Invitations API] Invitation status updated successfully');
         }
-      } catch (updateError) {
-        console.error('[Invitations API] Error updating invitation:', updateError);
-        // Continue anyway as the user has been added to the household
+        
+        return NextResponse.json({ 
+          message: 'You are already a member of this household',
+          role: existingMembership.role,
+          householdId: invitation.householdId
+        });
       }
       
-      console.log('[Invitations API] Invitation acceptance process completed successfully');
-      return NextResponse.json({ 
-        message: 'Invitation accepted successfully',
-        householdId: invitation.householdId
-      });
+      // Accept the invitation by updating status
+      console.log('[Invitations API] Accepting invitation');
+      const { error: updateError } = await supabase
+        .from('Invitation')
+        .update({ 
+          status: 'ACCEPTED', 
+          updatedAt: now.toISOString(),
+          respondedAt: now.toISOString()
+        })
+        .eq('id', invitation.id);
       
+      if (updateError) {
+        console.error('[Invitations API] Error updating invitation status:', updateError);
+        return NextResponse.json({ error: 'Failed to accept invitation' }, { status: 500 });
+      }
+      
+      // Add the user to the household
+      console.log('[Invitations API] Adding user to household');
+      const membershipId = generateUUID();
+      console.log('[Invitations API] Generated membership ID:', membershipId);
+      
+      const { error: addError } = await supabase
+        .from('HouseholdUser')
+        .insert([
+          {
+            id: membershipId,
+            userId: session.user.id,
+            householdId: invitation.householdId,
+            role: invitation.role,
+            joinedAt: now.toISOString()
+          }
+        ]);
+      
+      if (addError) {
+        console.error('[Invitations API] Error adding user to household:', addError);
+        return NextResponse.json({ error: 'Failed to add you to the household' }, { status: 500 });
+      }
+      
+      // Get household details to include in response
+      const { data: household, error: householdError } = await supabase
+        .from('Household')
+        .select('name')
+        .eq('id', invitation.householdId)
+        .single();
+      
+      console.log('[Invitations API] Successfully joined household');
+      
+      // Return success response
+      return NextResponse.json({
+        message: 'You have successfully joined the household',
+        householdId: invitation.householdId,
+        householdName: household?.name || 'Household',
+        role: invitation.role,
+        joinedAt: now.toISOString()
+      });
     } catch (error) {
-      console.error('[Invitations API] Error accepting invitation:', error);
+      console.error('[Invitations API] Error processing invitation acceptance:', error);
       return NextResponse.json({ 
-        error: 'Error accepting invitation',
+        error: 'Error processing invitation',
         details: error instanceof Error ? error.message : 'Unknown error'
       }, { status: 500 });
     }
