@@ -128,11 +128,26 @@ export async function GET(request: NextRequest) {
       // Get invitations for a specific household - requires admin permission
       console.log('[Invitations API] Fetching invitations for household:', householdId);
       
-      // First check if user is admin of this household
+      // First check if user exists in the database by email
+      console.log('[Invitations API] Looking up user ID by email:', session.user.email);
+      const { data: userData, error: userError } = await supabase
+        .from('User')
+        .select('id')
+        .eq('email', session.user.email)
+        .single();
+      
+      if (userError || !userData) {
+        console.error('[Invitations API] Error finding user by email:', userError);
+        return NextResponse.json({ error: 'User account not found' }, { status: 403 });
+      }
+      
+      console.log('[Invitations API] Found user ID in database:', userData.id);
+      
+      // Then check if user is admin of this household using the database user ID
       const { data: householdRole, error: roleError } = await supabase
         .from('HouseholdUser')
         .select('role')
-        .eq('userId', session.user.id)
+        .eq('userId', userData.id)
         .eq('householdId', householdId)
         .single();
       
@@ -260,12 +275,27 @@ export async function POST(request: NextRequest) {
     
     console.log('[Invitations API] Checking if user is household admin');
     
+    // First look up the user by email to get the correct database ID
+    console.log('[Invitations API] Looking up user ID by email:', session.user.email);
+    const { data: userData, error: userError } = await supabase
+      .from('User')
+      .select('id')
+      .eq('email', session.user.email)
+      .single();
+      
+    if (userError || !userData) {
+      console.error('[Invitations API] Error finding user by email:', userError);
+      return NextResponse.json({ error: 'User account not found' }, { status: 403 });
+    }
+    
+    console.log('[Invitations API] Found user ID in database:', userData.id);
+    
     // Check if the user is a member and admin of the household
     try {
       const { data: currentMembership, error: membershipError } = await supabase
         .from('HouseholdUser')
         .select('userId, role')
-        .eq('userId', session.user.id)
+        .eq('userId', userData.id) // Use the database ID instead of session.user.id
         .eq('householdId', householdId)
         .single();
       
@@ -377,7 +407,7 @@ export async function POST(request: NextRequest) {
             id: inviteId,
             email,
             householdId,
-            inviterId: session.user.id,
+            inviterId: userData.id, // Use the database user ID here too
             role,
             status: 'PENDING',
             message: message || null,
@@ -536,6 +566,46 @@ export async function PATCH(request: NextRequest) {
       if (status === 'ACCEPTED') {
         console.log('[Invitations API] Invitation accepted, adding user to household');
         
+        // First get or create the user record in the database
+        let userDbId;
+        
+        // Check if the user already exists in the database
+        const { data: existingUser, error: userError } = await supabase
+          .from('User')
+          .select('id')
+          .eq('email', session.user.email)
+          .single();
+          
+        if (userError || !existingUser) {
+          // Create a new user if not found
+          console.log('[Invitations API] User not found in database, creating new record');
+          const { data: newUser, error: createError } = await supabase
+            .from('User')
+            .insert([
+              {
+                id: session.user.id,
+                email: session.user.email,
+                name: session.user.name || session.user.email?.split('@')[0] || 'User',
+                password: 'MANAGED_BY_SUPABASE_AUTH',
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+              }
+            ])
+            .select('id')
+            .single();
+            
+          if (createError || !newUser) {
+            console.error('[Invitations API] Error creating user record:', createError);
+            return NextResponse.json({ error: 'Failed to create user record' }, { status: 500 });
+          }
+          
+          userDbId = newUser.id;
+        } else {
+          userDbId = existingUser.id;
+        }
+        
+        console.log('[Invitations API] Using user ID for household membership:', userDbId);
+        
         // Add the user to the household
         const membershipId = generateUUID();
         console.log('[Invitations API] Generated membership ID:', membershipId);
@@ -545,7 +615,7 @@ export async function PATCH(request: NextRequest) {
           .insert([
             {
               id: membershipId,
-              userId: session.user.id,
+              userId: userDbId,
               householdId: invitation.householdId,
               role: invitation.role,
               joinedAt: new Date().toISOString()
@@ -683,11 +753,51 @@ export async function PUT(request: NextRequest) {
         }, { status: 403 });
       }
       
+      // Find or create user record
+      let userDbId;
+      
+      // Check if the user already exists in the database
+      const { data: existingUser, error: userError } = await supabase
+        .from('User')
+        .select('id')
+        .eq('email', session.user.email)
+        .single();
+        
+      if (userError || !existingUser) {
+        // Create a new user if not found
+        console.log('[Invitations API] User not found in database, creating new record');
+        const { data: newUser, error: createError } = await supabase
+          .from('User')
+          .insert([
+            {
+              id: session.user.id,
+              email: session.user.email,
+              name: session.user.name || session.user.email?.split('@')[0] || 'User',
+              password: 'MANAGED_BY_SUPABASE_AUTH',
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            }
+          ])
+          .select('id')
+          .single();
+          
+        if (createError || !newUser) {
+          console.error('[Invitations API] Error creating user record:', createError);
+          return NextResponse.json({ error: 'Failed to create user record' }, { status: 500 });
+        }
+        
+        userDbId = newUser.id;
+      } else {
+        userDbId = existingUser.id;
+      }
+      
+      console.log('[Invitations API] User database ID:', userDbId);
+      
       // Try to get any existing household membership
       const { data: existingMembership, error: membershipError } = await supabase
         .from('HouseholdUser')
         .select('id, role')
-        .eq('userId', session.user.id)
+        .eq('userId', userDbId)
         .eq('householdId', invitation.householdId)
         .maybeSingle();
       
@@ -741,7 +851,7 @@ export async function PUT(request: NextRequest) {
         .insert([
           {
             id: membershipId,
-            userId: session.user.id,
+            userId: userDbId,
             householdId: invitation.householdId,
             role: invitation.role,
             joinedAt: now.toISOString()
