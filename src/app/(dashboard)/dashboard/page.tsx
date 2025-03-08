@@ -7,6 +7,7 @@ import HouseholdInfo from '@/components/dashboard/HouseholdInfo';
 import MemberGrid from '@/components/dashboard/MemberGrid';
 import Link from 'next/link';
 import InviteModal from '@/components/invitations/InviteModal';
+import { supabaseClient } from '@/lib/supabase';
 
 // Mock data for demonstration
 const MOCK_HOUSEHOLD = {
@@ -76,7 +77,35 @@ export default function DashboardPage() {
   const [inviteRole, setInviteRole] = useState('MEMBER');
   const [inviteMessage, setInviteMessage] = useState('');
   const [showWelcomeMessage, setShowWelcomeMessage] = useState(false);
-  const [currentHouseholdId, setCurrentHouseholdId] = useState('1'); // Update to fetch from API later
+  const [currentHouseholdId, setCurrentHouseholdId] = useState('');
+
+// Add this useEffect immediately after the useState declarations
+useEffect(() => {
+  const fetchUserHousehold = async () => {
+    try {
+      const { data: { session } } = await supabaseClient.auth.getSession();
+      
+      if (session) {
+        // Get the user's primary household
+        const { data: householdUser, error } = await supabaseClient
+          .from('HouseholdUser')
+          .select('householdId')
+          .eq('userId', session.user.id)
+          .order('joinedAt', { ascending: false })
+          .limit(1)
+          .single();
+        
+        if (!error && householdUser) {
+          setCurrentHouseholdId(householdUser.householdId);
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching household:', error);
+    }
+  };
+
+  fetchUserHousehold();
+}, []);
   
   const searchParams = useSearchParams();
   

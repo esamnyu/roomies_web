@@ -33,7 +33,8 @@ export async function GET(request: NextRequest) {
     let supabase;
     try {
       console.log('[Invitations API] Initializing Supabase client');
-      supabase = createRouteHandlerClient({ cookies });
+      const cookieStore = cookies(); // Removed 'await' here
+      supabase = createRouteHandlerClient({ cookies: () => cookieStore });
       console.log('[Invitations API] Supabase client created successfully');
     } catch (clientError) {
       console.error('[Invitations API] Failed to create Supabase client:', clientError);
@@ -203,7 +204,8 @@ export async function POST(request: NextRequest) {
     let supabase;
     try {
       console.log('[Invitations API] Initializing Supabase client');
-      supabase = createRouteHandlerClient({ cookies });
+      const cookieStore = cookies(); // Removed 'await' here
+      supabase = createRouteHandlerClient({ cookies: () => cookieStore });
       console.log('[Invitations API] Supabase client created successfully');
     } catch (clientError) {
       console.error('[Invitations API] Failed to create Supabase client:', clientError);
@@ -444,7 +446,8 @@ export async function PATCH(request: NextRequest) {
     let supabase;
     try {
       console.log('[Invitations API] Initializing Supabase client');
-      supabase = createRouteHandlerClient({ cookies });
+      const cookieStore = cookies(); // Removed 'await' here
+      supabase = createRouteHandlerClient({ cookies: () => cookieStore });
       console.log('[Invitations API] Supabase client created successfully');
     } catch (clientError) {
       console.error('[Invitations API] Failed to create Supabase client:', clientError);
@@ -615,7 +618,8 @@ export async function PUT(request: NextRequest) {
     let supabase;
     try {
       console.log('[Invitations API] Initializing Supabase client');
-      supabase = createRouteHandlerClient({ cookies });
+      const cookieStore = cookies(); // Removed 'await' here
+      supabase = createRouteHandlerClient({ cookies: () => cookieStore });
       console.log('[Invitations API] Supabase client created successfully');
     } catch (clientError) {
       console.error('[Invitations API] Failed to create Supabase client:', clientError);
