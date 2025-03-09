@@ -1,6 +1,7 @@
 // src/lib/chat.ts
 import { supabaseClient } from './supabase';
 import { generateUUID } from '@/lib/utils';
+
 // Types
 export interface Message {
   id: string;
@@ -98,6 +99,42 @@ export async function sendMessage(householdId: string, senderId: string, content
     return data;
   } catch (err) {
     console.error('Unexpected error sending message:', err);
+    return null;
+  }
+}
+
+/**
+ * Send a welcome message when a user joins a household
+ */
+export async function sendWelcomeMessage(householdId: string, userId: string, userName: string): Promise<Message | null> {
+  const messageId = generateUUID();
+  const now = new Date().toISOString();
+  
+  try {
+    const { data, error } = await supabaseClient
+      .from('Message')
+      .insert([
+        {
+          id: messageId,
+          householdId,
+          senderId: userId, // System or admin user ID
+          content: `👋 ${userName} has joined the household! Say hello!`,
+          contentType: 'TEXT',
+          createdAt: now,
+          updatedAt: now
+        }
+      ])
+      .select(`*, sender:senderId(id, name, avatar)`)
+      .single();
+  
+    if (error) {
+      console.error(`Error sending welcome message:`, error);
+      return null;
+    }
+  
+    return data;
+  } catch (err) {
+    console.error('Error sending welcome message:', err);
     return null;
   }
 }

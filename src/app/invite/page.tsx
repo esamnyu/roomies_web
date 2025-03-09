@@ -107,12 +107,9 @@ export default function InvitationPage() {
         throw new Error(data.error || 'Failed to accept invitation');
       }
       
-      // Redirect to the dashboard or wherever the API tells us to go
-      if (data.redirectTo) {
-        router.push(data.redirectTo);
-      } else {
-        router.push('/dashboard');
-      }
+      // Redirect to chat page regardless of what redirectTo says
+      router.push('/chat');
+      
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
