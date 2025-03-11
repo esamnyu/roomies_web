@@ -39,6 +39,7 @@ export default function InvitationPage() {
   const [processingAction, setProcessingAction] = useState(false);
   const [userSession, setUserSession] = useState<any>(null);
   const [needsSignIn, setNeedsSignIn] = useState(false);
+  const [showClaimConfirmation, setShowClaimConfirmation] = useState(false);
   
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -114,6 +115,38 @@ export default function InvitationPage() {
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
       setProcessingAction(false);
+    }
+  };
+
+  const handleClaimInvitation = async () => {
+    if (!token) return;
+    
+    setProcessingAction(true);
+    try {
+      const response = await fetch(`/api/invitations/${token}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ 
+          action: 'accept',
+          claimWithCurrentEmail: true 
+        }),
+      });
+      
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to accept invitation');
+      }
+      
+      // Redirect to chat page
+      router.push('/chat');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred');
+    } finally {
+      setProcessingAction(false);
+      setShowClaimConfirmation(false);
     }
   };
   
@@ -325,10 +358,10 @@ export default function InvitationPage() {
           {emailMismatch && (
             <div className="mt-4 p-4 bg-yellow-50 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200 rounded-md">
               <p className="text-sm">
-                <strong>Warning:</strong> You're currently signed in as {userSession.user.email}, 
+                <strong>Note:</strong> You're currently signed in as {userSession.user.email}, 
                 but this invitation was sent to {invitation.email}.
               </p>
-              <div className="mt-2 flex justify-end">
+              <div className="mt-2 flex justify-end gap-2">
                 <button
                   onClick={async () => {
                     await supabaseClient.auth.signOut();
@@ -336,7 +369,13 @@ export default function InvitationPage() {
                   }}
                   className="text-sm text-yellow-800 dark:text-yellow-200 underline"
                 >
-                  Sign out and continue
+                  Sign out
+                </button>
+                <button
+                  onClick={() => setShowClaimConfirmation(true)}
+                  className="px-2 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"
+                >
+                  Use current account
                 </button>
               </div>
             </div>
@@ -347,7 +386,7 @@ export default function InvitationPage() {
               variant="outline"
               fullWidth
               onClick={handleDeclineInvitation}
-              disabled={processingAction || emailMismatch}
+              disabled={processingAction || (emailMismatch && !showClaimConfirmation)}
             >
               Decline
             </Button>
@@ -357,13 +396,40 @@ export default function InvitationPage() {
               fullWidth
               onClick={handleAcceptInvitation}
               isLoading={processingAction}
-              disabled={processingAction || emailMismatch}
+              disabled={processingAction || (emailMismatch && !showClaimConfirmation)}
             >
               Accept
             </Button>
           </div>
         </div>
       </div>
+
+      {/* Confirmation Modal */}
+      {showClaimConfirmation && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-gray-800 p-6 rounded-lg max-w-md w-full">
+            <h3 className="text-lg font-bold mb-4 text-gray-900 dark:text-white">Link invitation to your account?</h3>
+            <p className="mb-4 text-gray-700 dark:text-gray-300">
+              This will accept the invitation sent to <strong>{invitation.email}</strong> and 
+              link it to your current account <strong>{userSession.user.email}</strong>.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setShowClaimConfirmation(false)}
+                className="px-3 py-2 border border-gray-300 rounded text-gray-700 dark:text-gray-300 dark:border-gray-600"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleClaimInvitation}
+                className="px-3 py-2 bg-blue-600 text-white rounded"
+              >
+                Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

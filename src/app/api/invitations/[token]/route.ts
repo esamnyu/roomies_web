@@ -91,7 +91,7 @@ export async function POST(
       return NextResponse.json({ error: 'Invalid token' }, { status: 400 });
     }
     
-    const { action } = await request.json();
+    const { action, claimWithCurrentEmail = false } = await request.json();
     
     if (!action || !['accept', 'decline'].includes(action)) {
       return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
@@ -156,7 +156,8 @@ export async function POST(
     }
     
     // Check if the authenticated user's email matches the invitation email
-    if (session.user.email !== invitation.email) {
+    // or if they explicitly want to claim it with their current email
+    if (session.user.email !== invitation.email && !claimWithCurrentEmail) {
       return NextResponse.json({ 
         error: 'This invitation was sent to a different email address' 
       }, { status: 403 });
@@ -183,6 +184,28 @@ export async function POST(
       });
     }
     
+    // If accepting with a different email, add a note to the invitation record
+    if (claimWithCurrentEmail && session.user.email !== invitation.email) {
+      await supabaseClient
+        .from('Invitation')
+        .update({ 
+          status: 'ACCEPTED', 
+          updatedAt: new Date().toISOString(),
+          respondedAt: new Date().toISOString(),
+          notes: `Claimed by ${session.user.email} (original recipient: ${invitation.email})`
+        })
+        .eq('id', invitation.id);
+    } else {
+      await supabaseClient
+        .from('Invitation')
+        .update({ 
+          status: 'ACCEPTED', 
+          updatedAt: new Date().toISOString(),
+          respondedAt: new Date().toISOString()
+        })
+        .eq('id', invitation.id);
+    }
+    
     // Add the user to the household
     const membershipId = generateUUID();
     const { error: joinError } = await supabaseClient
@@ -201,12 +224,6 @@ export async function POST(
       console.error('Error adding user to household:', joinError);
       return NextResponse.json({ error: 'Failed to join household' }, { status: 500 });
     }
-    
-    // Update the invitation status to ACCEPTED
-    await supabaseClient
-      .from('Invitation')
-      .update({ status: 'ACCEPTED', updatedAt: new Date().toISOString() })
-      .eq('id', invitation.id);
     
     return NextResponse.json({ 
       message: 'Successfully joined the household',
