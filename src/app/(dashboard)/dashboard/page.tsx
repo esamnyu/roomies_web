@@ -5,6 +5,7 @@ import { useState, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
 import HouseholdInfo from '@/components/dashboard/HouseholdInfo';
 import MemberGrid from '@/components/dashboard/MemberGrid';
+import PendingInvitationsPanel from '@/components/dashboard/PendingInvitationsPanel';
 import Link from 'next/link';
 import InviteModal from '@/components/invitations/InviteModal';
 import { supabaseClient } from '@/lib/supabase';
@@ -170,6 +171,11 @@ useEffect(() => {
           </div>
         </div>
       )}
+
+      {/* Pending Invitations Panel */}
+      <div className="mb-6">
+        <PendingInvitationsPanel />
+      </div>
 
       <div className="flex flex-col lg:flex-row gap-6">
         <div className="w-full lg:w-2/3">
