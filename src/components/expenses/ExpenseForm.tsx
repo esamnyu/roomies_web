@@ -2,7 +2,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-
+import { supabaseClient } from '@/lib/supabase';
+import { useSession } from 'next-auth/react';
 interface Member {
   id: string;
   name: string;
@@ -40,17 +41,27 @@ interface Expense {
 interface ExpenseFormProps {
   expense?: Expense | null;
   members: Member[];
+  householdId: string; // Add householdId prop
   onSubmit: (expense: Expense) => void;
   onCancel: () => void;
 }
 
-export default function ExpenseForm({ expense, members, onSubmit, onCancel }: ExpenseFormProps) {
-  // For demo purposes, assuming current user is user1
-  const currentUserId = '1';
+export default function ExpenseForm({ 
+  expense, 
+  members, 
+  householdId, 
+  onSubmit, 
+  onCancel 
+}: ExpenseFormProps) {
+  const { data: session } = useSession();
+  const currentUserId = session?.user?.id || '';
   const currentUser = members.find(m => m.id === currentUserId);
   
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  
   // Default state for a new expense
-  const defaultState = {
+  const getDefaultState = () => ({
     title: '',
     amount: 0,
     date: new Date().toISOString().split('T')[0], // Today in YYYY-MM-DD format
@@ -58,18 +69,20 @@ export default function ExpenseForm({ expense, members, onSubmit, onCancel }: Ex
     splitType: 'EQUAL' as const,
     creatorId: currentUserId,
     creatorName: currentUser?.name || '',
-    householdId: '1', // Assuming we have a single household for now
+    householdId, // Use prop instead of hardcoded value
     splits: [],
     payments: []
-  };
+  });
 
-  const [formData, setFormData] = useState<Omit<Expense, 'date'> & { date: string }>(defaultState);
+  const [formData, setFormData] = useState<Omit<Expense, 'date'> & { date: string }>(getDefaultState());
   const [splitPercentages, setSplitPercentages] = useState<Record<string, number>>({});
   const [splitAmounts, setSplitAmounts] = useState<Record<string, number>>({});
-  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 
-  // Initialize form data when expense prop changes
+  // Initialize form data when expense prop changes or user session loads
   useEffect(() => {
+    if (!currentUserId) return; // Wait for user session
+    
     if (expense) {
       const tempSplitPercentages: Record<string, number> = {};
       const tempSplitAmounts: Record<string, number> = {};
@@ -100,9 +113,13 @@ export default function ExpenseForm({ expense, members, onSubmit, onCancel }: Ex
       setSplitPercentages(tempSplitPercentages);
       setSplitAmounts(tempSplitAmounts);
       
-      setFormData(defaultState);
+      setFormData({
+        ...getDefaultState(),
+        creatorId: currentUserId,
+        creatorName: currentUser?.name || '',
+      });
     }
-  }, [expense, members]);
+  }, [expense, members, currentUserId, currentUser, householdId]);
 
   // Calculate splits when amount or splitType changes
   useEffect(() => {
@@ -152,8 +169,8 @@ export default function ExpenseForm({ expense, members, onSubmit, onCancel }: Ex
     }
     
     // Clear error when field is edited
-    if (errors[name]) {
-      setErrors({ ...errors, [name]: '' });
+    if (formErrors[name]) {
+      setFormErrors({ ...formErrors, [name]: '' });
     }
   };
 
@@ -204,46 +221,96 @@ export default function ExpenseForm({ expense, members, onSubmit, onCancel }: Ex
       }
     }
     
-    setErrors(newErrors);
+    setFormErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (!validateForm()) {
       return;
     }
     
-    // Create splits array
-    const splits = members.map(member => ({
-      userId: member.id,
-      userName: member.name,
-      amount: splitAmounts[member.id] || 0,
-      percentage: splitPercentages[member.id] || 0
-    }));
+    setIsSubmitting(true);
+    setError(null);
     
-    // Create payments array - the creator is paid, everyone else pays
-    const payments = members
-      .filter(member => member.id !== formData.creatorId) // Exclude creator
-      .map(member => ({
+    try {
+      // Create splits array
+      const splits = members.map(member => ({
         userId: member.id,
         userName: member.name,
         amount: splitAmounts[member.id] || 0,
-        status: expense?.payments?.find(p => p.userId === member.id)?.status || 'PENDING' as const
+        percentage: splitPercentages[member.id] || 0
       }));
-    
-    // Submit the expense
-    onSubmit({
-      ...formData,
-      date: new Date(formData.date), // Convert string back to Date
-      splits,
-      payments
-    });
+      
+      // Create payments array - the creator is paid, everyone else pays
+      const payments = members
+        .filter(member => member.id !== formData.creatorId) // Exclude creator
+        .map(member => ({
+          userId: member.id,
+          userName: member.name,
+          amount: splitAmounts[member.id] || 0,
+          status: expense?.payments?.find(p => p.userId === member.id)?.status || 'PENDING' as const
+        }));
+      
+      // Prepare the expense data
+      const expenseData = {
+        ...formData,
+        date: new Date(formData.date), // Convert string back to Date
+        splits,
+        payments
+      };
+      
+      // If editing an existing expense
+      if (expense?.id) {
+        const response = await fetch(`/api/expenses/${expense.id}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(expenseData),
+        });
+        
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.message || 'Failed to update expense');
+        }
+      } 
+      // If creating a new expense
+      else {
+        const response = await fetch('/api/expenses', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(expenseData),
+        });
+        
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.message || 'Failed to create expense');
+        }
+      }
+      
+      // Call the onSubmit callback with the expense data
+      onSubmit(expenseData);
+    } catch (err) {
+      console.error('Error saving expense:', err);
+      setError(err instanceof Error ? err.message : 'An error occurred while saving the expense');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
     <form onSubmit={handleSubmit} className="mt-5 space-y-4">
+      {error && (
+        <div className="p-3 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 rounded-md">
+          {error}
+        </div>
+      )}
+      
       <div>
         <label 
           htmlFor="title" 
@@ -261,7 +328,7 @@ export default function ExpenseForm({ expense, members, onSubmit, onCancel }: Ex
           required
           className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
         />
-        {errors.title && <p className="mt-1 text-sm text-red-600 dark:text-red-400">{errors.title}</p>}
+        {formErrors.title && <p className="mt-1 text-sm text-red-600 dark:text-red-400">{formErrors.title}</p>}
       </div>
       
       <div>
@@ -283,7 +350,7 @@ export default function ExpenseForm({ expense, members, onSubmit, onCancel }: Ex
           required
           className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
         />
-        {errors.amount && <p className="mt-1 text-sm text-red-600 dark:text-red-400">{errors.amount}</p>}
+        {formErrors.amount && <p className="mt-1 text-sm text-red-600 dark:text-red-400">{formErrors.amount}</p>}
       </div>
       
       <div>
@@ -340,7 +407,7 @@ export default function ExpenseForm({ expense, members, onSubmit, onCancel }: Ex
           <option value="PERCENTAGE">Split by percentage</option>
           <option value="CUSTOM">Custom split</option>
         </select>
-        {errors.splitType && <p className="mt-1 text-sm text-red-600 dark:text-red-400">{errors.splitType}</p>}
+        {formErrors.splitType && <p className="mt-1 text-sm text-red-600 dark:text-red-400">{formErrors.splitType}</p>}
       </div>
       
       {/* Split details */}
@@ -406,15 +473,17 @@ export default function ExpenseForm({ expense, members, onSubmit, onCancel }: Ex
         <button
           type="button"
           onClick={onCancel}
-          className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md shadow-sm hover:bg-gray-50 dark:bg-gray-700 dark:text-gray-300 dark:border-gray-600 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+          disabled={isSubmitting}
+          className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md shadow-sm hover:bg-gray-50 dark:bg-gray-700 dark:text-gray-300 dark:border-gray-600 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-70 disabled:cursor-not-allowed"
         >
           Cancel
         </button>
         <button
           type="submit"
-          className="px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+          disabled={isSubmitting}
+          className="px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-blue-400 disabled:cursor-not-allowed"
         >
-          {expense ? 'Update Expense' : 'Add Expense'}
+          {isSubmitting ? 'Saving...' : expense ? 'Update Expense' : 'Add Expense'}
         </button>
       </div>
     </form>

@@ -64,9 +64,18 @@ export default function PendingInvitations({
     try {
       setIsResending(prev => ({ ...prev, [invitationId]: true }));
       
-      // In a real implementation, you would have an API endpoint to resend
-      // For now, we'll just simulate it with a delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Make actual API call to resend invitation
+      const response = await fetch(`/api/invitations/${invitationId}/resend`, {
+        method: 'POST',
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || 'Failed to resend invitation');
+      }
+      
+      // Show success notification
+      alert('Invitation has been resent successfully!');
       
       // Refresh the list
       await fetchInvitations();
@@ -89,8 +98,17 @@ export default function PendingInvitations({
     try {
       setIsCanceling(prev => ({ ...prev, [invitationId]: true }));
       
-      // In a real implementation, you would have an API endpoint to cancel
-      // For now, we'll just remove it from the list
+      // Make actual API call to cancel invitation
+      const response = await fetch(`/api/invitations/${invitationId}`, {
+        method: 'DELETE',
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || 'Failed to cancel invitation');
+      }
+      
+      // Remove the invitation from the list
       setInvitations(prev => prev.filter(inv => inv.id !== invitationId));
       
       if (onRefresh) {

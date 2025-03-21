@@ -4,6 +4,7 @@
 import { useState } from 'react';
 
 interface HouseholdInfoProps {
+  householdId: string;
   name: string;
   address: string;
   moveInDate: string;
@@ -11,9 +12,11 @@ interface HouseholdInfoProps {
   pendingExpenses?: number;
   upcomingTasks?: number;
   unreadMessages?: number;
+  onUpdate?: (updated: { name: string; address: string }) => void;
 }
 
 export default function HouseholdInfo({
+  householdId,
   name,
   address,
   moveInDate,
@@ -21,20 +24,61 @@ export default function HouseholdInfo({
   pendingExpenses = 0,
   upcomingTasks = 0,
   unreadMessages = 0,
+  onUpdate,
 }: HouseholdInfoProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [householdName, setHouseholdName] = useState(name);
   const [householdAddress, setHouseholdAddress] = useState(address);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleSave = () => {
-    // In a real app, you would save this data to your backend
-    // For now, we'll just update the local state
-    setIsEditing(false);
-    // You would add an API call here to update the household info
+  const handleSave = async () => {
+    setIsSubmitting(true);
+    setError(null);
+    
+    try {
+      const response = await fetch(`/api/households/${householdId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: householdName,
+          address: householdAddress,
+        }),
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || 'Failed to update household information');
+      }
+      
+      // Update successful
+      setIsEditing(false);
+      
+      // Notify parent component if needed
+      if (onUpdate) {
+        onUpdate({
+          name: householdName,
+          address: householdAddress,
+        });
+      }
+    } catch (err) {
+      console.error('Error updating household:', err);
+      setError(err instanceof Error ? err.message : 'An error occurred while updating household information');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
     <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">
+      {error && (
+        <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 rounded-md">
+          {error}
+        </div>
+      )}
+
       <div className="flex justify-between items-center mb-4">
         {isEditing ? (
           <input
@@ -49,9 +93,10 @@ export default function HouseholdInfo({
         
         <button
           onClick={() => isEditing ? handleSave() : setIsEditing(true)}
-          className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+          disabled={isSubmitting}
+          className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-blue-400 disabled:cursor-not-allowed"
         >
-          {isEditing ? 'Save' : 'Edit'}
+          {isSubmitting ? 'Saving...' : isEditing ? 'Save' : 'Edit'}
         </button>
       </div>
       

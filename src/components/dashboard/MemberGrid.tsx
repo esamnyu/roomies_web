@@ -1,8 +1,9 @@
 // src/components/dashboard/MemberGrid.tsx
 'use client';
 
+import { useState, useEffect } from 'react';
 import Image from 'next/image';
-import { useState } from 'react';
+import { supabaseClient } from '@/lib/supabase';
 
 interface Member {
   id: string;
@@ -18,12 +19,54 @@ interface Member {
 }
 
 interface MemberGridProps {
-  members: Member[];
+  householdId: string;
   onInvite?: () => void;
 }
 
-export default function MemberGrid({ members, onInvite }: MemberGridProps) {
+export default function MemberGrid({ householdId, onInvite }: MemberGridProps) {
+  const [members, setMembers] = useState<Member[]>([]);
   const [activeTab, setActiveTab] = useState<'ALL' | 'ONLINE' | 'AWAY'>('ALL');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  
+  useEffect(() => {
+    fetchMembers();
+  }, [householdId]);
+  
+  const fetchMembers = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      
+      const response = await fetch(`/api/households/${householdId}/members`);
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch household members');
+      }
+      
+      const data = await response.json();
+      setMembers(data);
+    } catch (err) {
+      console.error('Error fetching members:', err);
+      setError(err instanceof Error ? err.message : 'An error occurred while fetching members');
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  // Get current user's ID for UI enhancements
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  
+  useEffect(() => {
+    const getCurrentUser = async () => {
+      const { data: { session } } = await supabaseClient.auth.getSession();
+      if (session?.user) {
+        setCurrentUserId(session.user.id);
+      }
+    };
+    
+    getCurrentUser();
+  }, []);
   
   const filteredMembers = activeTab === 'ALL' 
     ? members 
@@ -50,6 +93,47 @@ export default function MemberGrid({ members, onInvite }: MemberGridProps) {
         return 'bg-gray-500';
     }
   };
+  
+  const handleMessageMember = async (memberId: string) => {
+    try {
+      // Implementation would depend on your chat system
+      console.log(`Opening chat with member: ${memberId}`);
+      // Navigate to chat or open chat modal
+    } catch (err) {
+      console.error('Error starting chat:', err);
+    }
+  };
+  
+  const handleMemberOptions = (memberId: string) => {
+    // This would open a dropdown or modal with member options
+    console.log(`Show options for member: ${memberId}`);
+  };
+
+  if (loading) {
+    return (
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+        <div className="flex items-center justify-center h-40">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 dark:border-white"></div>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+        <div className="text-red-600 dark:text-red-400">
+          Error: {error}
+          <button 
+            onClick={fetchMembers}
+            className="ml-2 text-blue-600 dark:text-blue-400 underline"
+          >
+            Try again
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md">
@@ -141,7 +225,9 @@ export default function MemberGrid({ members, onInvite }: MemberGridProps) {
                 <div className="ml-4 flex-1">
                   <div className="flex items-center justify-between">
                     <div>
-                      <h4 className="text-sm font-medium text-gray-900 dark:text-white">{member.name}</h4>
+                      <h4 className="text-sm font-medium text-gray-900 dark:text-white">
+                        {member.name} {member.id === currentUserId && ' (You)'}
+                      </h4>
                       <div className="flex items-center mt-1">
                         <span 
                           className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getRoleColor(member.role)}`}
@@ -155,7 +241,11 @@ export default function MemberGrid({ members, onInvite }: MemberGridProps) {
                     </div>
                     
                     <div className="flex items-center space-x-2">
-                      <button className="text-gray-400 hover:text-gray-500 dark:hover:text-gray-300">
+                      <button 
+                        className="text-gray-400 hover:text-gray-500 dark:hover:text-gray-300"
+                        onClick={() => handleMessageMember(member.id)}
+                        aria-label={`Message ${member.name}`}
+                      >
                         <svg 
                           className="h-5 w-5" 
                           fill="none" 
@@ -171,7 +261,11 @@ export default function MemberGrid({ members, onInvite }: MemberGridProps) {
                           />
                         </svg>
                       </button>
-                      <button className="text-gray-400 hover:text-gray-500 dark:hover:text-gray-300">
+                      <button 
+                        className="text-gray-400 hover:text-gray-500 dark:hover:text-gray-300"
+                        onClick={() => handleMemberOptions(member.id)}
+                        aria-label={`More options for ${member.name}`}
+                      >
                         <svg 
                           className="h-5 w-5" 
                           fill="none" 

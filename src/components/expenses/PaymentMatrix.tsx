@@ -1,7 +1,7 @@
 // src/components/expenses/PaymentMatrix.tsx
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
 interface Balance {
   userId: string;
@@ -12,11 +12,40 @@ interface Balance {
 }
 
 interface PaymentMatrixProps {
-  balances: Balance[];
+  householdId: string;  // Added householdId prop
 }
 
-export default function PaymentMatrix({ balances }: PaymentMatrixProps) {
+export default function PaymentMatrix({ householdId }: PaymentMatrixProps) {
   const [view, setView] = useState<'summary' | 'detail'>('summary');
+  const [balances, setBalances] = useState<Balance[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  
+  // Fetch household balances when component mounts or householdId changes
+  useEffect(() => {
+    fetchBalances();
+  }, [householdId]);
+  
+  const fetchBalances = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      
+      const response = await fetch(`/api/households/${householdId}/balances`);
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch household balances');
+      }
+      
+      const data = await response.json();
+      setBalances(data);
+    } catch (err) {
+      console.error('Error fetching balances:', err);
+      setError(err instanceof Error ? err.message : 'An error occurred while fetching balances');
+    } finally {
+      setLoading(false);
+    }
+  };
   
   // Calculate total amounts
   const totalOwed = balances.reduce((sum, balance) => sum + balance.isOwed, 0);
@@ -65,6 +94,64 @@ export default function PaymentMatrix({ balances }: PaymentMatrixProps) {
   };
   
   const optimalPayments = calculateOptimalPayments();
+  
+  // Handle a payment being marked as complete
+  const handleMarkPaymentComplete = async (fromUserId: string, toUserId: string, amount: number) => {
+    try {
+      const response = await fetch('/api/payments/mark-complete', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          householdId,
+          fromUserId,
+          toUserId,
+          amount
+        }),
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || 'Failed to mark payment as complete');
+      }
+      
+      // Refresh balances after marking payment complete
+      await fetchBalances();
+      
+      // Show success message
+      alert('Payment marked as complete!');
+    } catch (err) {
+      console.error('Error marking payment complete:', err);
+      alert(err instanceof Error ? err.message : 'An error occurred');
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="bg-white dark:bg-gray-800 shadow-md rounded-lg overflow-hidden p-6">
+        <div className="flex justify-center items-center h-40">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 dark:border-white"></div>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="bg-white dark:bg-gray-800 shadow-md rounded-lg overflow-hidden p-6">
+        <div className="text-red-600 dark:text-red-400">
+          Error: {error}
+          <button 
+            onClick={fetchBalances}
+            className="ml-2 text-blue-600 dark:text-blue-400 underline"
+          >
+            Try again
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-white dark:bg-gray-800 shadow-md rounded-lg overflow-hidden">
@@ -99,7 +186,11 @@ export default function PaymentMatrix({ balances }: PaymentMatrixProps) {
         </div>
       </div>
       
-      {view === 'summary' ? (
+      {balances.length === 0 ? (
+        <div className="p-6 text-center text-gray-500 dark:text-gray-400">
+          No financial data available. Add expenses to see payment summaries.
+        </div>
+      ) : view === 'summary' ? (
         <div className="px-4 py-5 sm:p-6">
           <div className="grid md:grid-cols-3 gap-6">
             {balances.map((balance) => (
@@ -174,9 +265,17 @@ export default function PaymentMatrix({ balances }: PaymentMatrixProps) {
                     </svg>
                     <span className="font-medium text-gray-900 dark:text-white">{payment.toName}</span>
                   </div>
-                  <span className="font-medium text-green-600 dark:text-green-400">
-                    ${payment.amount.toFixed(2)}
-                  </span>
+                  <div className="flex items-center">
+                    <span className="font-medium text-green-600 dark:text-green-400 mr-3">
+                      ${payment.amount.toFixed(2)}
+                    </span>
+                    <button 
+                      onClick={() => handleMarkPaymentComplete(payment.from, payment.to, payment.amount)}
+                      className="px-2 py-1 bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300 text-xs rounded-md hover:bg-green-200 dark:hover:bg-green-800"
+                    >
+                      Mark Paid
+                    </button>
+                  </div>
                 </li>
               ))}
             </ul>

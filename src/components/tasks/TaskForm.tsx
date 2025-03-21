@@ -2,12 +2,29 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import type { Task } from '@/components/tasks/TaskList'; // Import the same Task type
+import { supabaseClient } from '@/lib/supabase';
 
 interface Member {
   id: string;
   name: string;
   avatar?: string;
+}
+
+interface Task {
+  id: string;
+  title: string;
+  description?: string;
+  status: 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'SKIPPED';
+  priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
+  creatorId: string;
+  creatorName?: string;
+  assigneeId?: string;
+  assigneeName?: string;
+  dueDate?: Date | string;
+  recurring: boolean;
+  recurrenceRule?: string;
+  householdId: string;
+  completedAt?: Date;
 }
 
 // Define a NewTask type that can be used for creation (without id)
@@ -16,18 +33,38 @@ type NewTask = Omit<Task, 'id'> & { id?: string };
 interface TaskFormProps {
   task?: Task | null;
   members: Member[];
-  // Update this to accept both Task and NewTask types
+  householdId: string; // Added householdId prop
   onSubmit: (task: Task | NewTask) => void;
   onCancel: () => void;
 }
 
-export default function TaskForm({ task, members, onSubmit, onCancel }: TaskFormProps) {
-  // For demo purposes, assuming current user is user1
-  const currentUserId = '1';
+export default function TaskForm({ 
+  task, 
+  members, 
+  householdId, 
+  onSubmit, 
+  onCancel 
+}: TaskFormProps) {
+  const [currentUserId, setCurrentUserId] = useState<string>('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  
+  // Get current user from Supabase
+  useEffect(() => {
+    const getCurrentUser = async () => {
+      const { data: { session } } = await supabaseClient.auth.getSession();
+      if (session?.user) {
+        setCurrentUserId(session.user.id);
+      }
+    };
+    
+    getCurrentUser();
+  }, []);
+  
   const currentUser = members.find(m => m.id === currentUserId);
   
   // Default state for a new task
-  const defaultState = {
+  const getDefaultState = () => ({
     title: '',
     description: '',
     status: 'PENDING' as const,
@@ -37,14 +74,16 @@ export default function TaskForm({ task, members, onSubmit, onCancel }: TaskForm
     dueDate: '',
     recurring: false,
     recurrenceRule: 'WEEKLY',
-    householdId: '1', // Assuming we have a single household for now
-  };
+    householdId, // Use prop instead of hardcoded value
+  });
 
-  const [formData, setFormData] = useState<Omit<Task, 'id' | 'dueDate'> & { id?: string, dueDate: string }>(defaultState);
-  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [formData, setFormData] = useState<Omit<Task, 'id' | 'dueDate'> & { id?: string, dueDate: string }>(getDefaultState());
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 
-  // Initialize form data when task prop changes
+  // Initialize form data when task prop changes or when currentUserId is set
   useEffect(() => {
+    if (!currentUserId) return; // Wait for user to be set
+    
     if (task) {
       setFormData({
         ...task,
@@ -52,9 +91,12 @@ export default function TaskForm({ task, members, onSubmit, onCancel }: TaskForm
         recurrenceRule: task.recurrenceRule || 'WEEKLY',
       });
     } else {
-      setFormData(defaultState);
+      setFormData({
+        ...getDefaultState(),
+        creatorId: currentUserId,
+      });
     }
-  }, [task]);
+  }, [task, currentUserId, householdId]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value, type } = e.target;
@@ -67,8 +109,13 @@ export default function TaskForm({ task, members, onSubmit, onCancel }: TaskForm
     }
     
     // Clear error when field is edited
-    if (errors[name]) {
-      setErrors({ ...errors, [name]: '' });
+    if (formErrors[name]) {
+      setFormErrors({ ...formErrors, [name]: '' });
+    }
+    
+    // Clear general error
+    if (error) {
+      setError(null);
     }
   };
 
@@ -87,28 +134,89 @@ export default function TaskForm({ task, members, onSubmit, onCancel }: TaskForm
       newErrors.recurrenceRule = 'Please select a recurrence pattern';
     }
     
-    setErrors(newErrors);
+    setFormErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (!validateForm()) {
       return;
     }
     
-    // Submit the task
-    const submittedTask = {
-      ...formData,
-      dueDate: formData.dueDate ? new Date(formData.dueDate) : undefined, // Convert string back to Date
-    };
+    setIsSubmitting(true);
+    setError(null);
     
-    onSubmit(submittedTask);
+    try {
+      // Prepare task data
+      const taskData: NewTask = {
+        ...formData,
+        dueDate: formData.dueDate ? new Date(formData.dueDate) : undefined, // Convert string back to Date
+      };
+      
+      // Add assignee name
+      if (taskData.assigneeId) {
+        const assignee = members.find(m => m.id === taskData.assigneeId);
+        if (assignee) {
+          taskData.assigneeName = assignee.name;
+        }
+      }
+      
+      // Add creator name if not already set
+      if (!taskData.creatorName && currentUser) {
+        taskData.creatorName = currentUser.name;
+      }
+      
+      // If editing an existing task
+      if (task?.id) {
+        const response = await fetch(`/api/tasks/${task.id}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(taskData),
+        });
+        
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.message || 'Failed to update task');
+        }
+      } 
+      // If creating a new task
+      else {
+        const response = await fetch('/api/tasks', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(taskData),
+        });
+        
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.message || 'Failed to create task');
+        }
+      }
+      
+      // Call onSubmit callback with the task data
+      onSubmit(taskData);
+    } catch (err) {
+      console.error('Error saving task:', err);
+      setError(err instanceof Error ? err.message : 'An error occurred while saving the task');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
     <form onSubmit={handleSubmit} className="mt-5 space-y-4">
+      {error && (
+        <div className="p-3 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 rounded-md">
+          {error}
+        </div>
+      )}
+      
       <div>
         <label 
           htmlFor="title" 
@@ -126,7 +234,7 @@ export default function TaskForm({ task, members, onSubmit, onCancel }: TaskForm
           required
           className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
         />
-        {errors.title && <p className="mt-1 text-sm text-red-600 dark:text-red-400">{errors.title}</p>}
+        {formErrors.title && <p className="mt-1 text-sm text-red-600 dark:text-red-400">{formErrors.title}</p>}
       </div>
       
       <div>
@@ -169,7 +277,7 @@ export default function TaskForm({ task, members, onSubmit, onCancel }: TaskForm
               </option>
             ))}
           </select>
-          {errors.assigneeId && <p className="mt-1 text-sm text-red-600 dark:text-red-400">{errors.assigneeId}</p>}
+          {formErrors.assigneeId && <p className="mt-1 text-sm text-red-600 dark:text-red-400">{formErrors.assigneeId}</p>}
         </div>
         
         <div>
@@ -268,7 +376,7 @@ export default function TaskForm({ task, members, onSubmit, onCancel }: TaskForm
             <option value="BIWEEKLY">Every 2 weeks</option>
             <option value="MONTHLY">Monthly</option>
           </select>
-          {errors.recurrenceRule && <p className="mt-1 text-sm text-red-600 dark:text-red-400">{errors.recurrenceRule}</p>}
+          {formErrors.recurrenceRule && <p className="mt-1 text-sm text-red-600 dark:text-red-400">{formErrors.recurrenceRule}</p>}
         </div>
       )}
       
@@ -276,15 +384,17 @@ export default function TaskForm({ task, members, onSubmit, onCancel }: TaskForm
         <button
           type="button"
           onClick={onCancel}
-          className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md shadow-sm hover:bg-gray-50 dark:bg-gray-700 dark:text-gray-300 dark:border-gray-600 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+          disabled={isSubmitting}
+          className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md shadow-sm hover:bg-gray-50 dark:bg-gray-700 dark:text-gray-300 dark:border-gray-600 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-70 disabled:cursor-not-allowed"
         >
           Cancel
         </button>
         <button
           type="submit"
-          className="px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+          disabled={isSubmitting}
+          className="px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-blue-400 disabled:cursor-not-allowed"
         >
-          {task ? 'Update Task' : 'Create Task'}
+          {isSubmitting ? 'Saving...' : task ? 'Update Task' : 'Create Task'}
         </button>
       </div>
     </form>
