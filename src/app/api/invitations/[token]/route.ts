@@ -11,6 +11,7 @@ export async function GET(
   { params }: { params: { token: string } }
 ) {
   try {
+    // Access token parameter - params is now awaited by Next.js internally
     const token = params.token;
     
     if (!token) {
@@ -82,9 +83,15 @@ export async function POST(
 ) {
   try {
     // Get auth session if the user is logged in
-    const supabaseAuth = createServerComponentClient({ cookies });
+    // Fix: Properly pass cookies to createServerComponentClient
+    const cookieStore = cookies();
+    const supabaseAuth = createServerComponentClient({ 
+      cookies: () => cookieStore 
+    });
+    
     const { data: { session } } = await supabaseAuth.auth.getSession();
     
+    // Access token parameter - already awaited by Next.js internally
     const token = params.token;
     
     if (!token) {

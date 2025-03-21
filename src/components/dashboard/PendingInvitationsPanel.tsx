@@ -3,12 +3,12 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { supabaseClient } from '@/lib/supabase';
 import Button from '@/components/ui/Button';
 import Card from '@/components/ui/Card';
 
 // Define the interface for invitation objects
 interface Invitation {
-  role: any;
   id: string;
   token: string;
   email: string;
@@ -16,6 +16,9 @@ interface Invitation {
   message?: string;
   expiresAt: string;
   createdAt: string;
+  householdId: string;
+  inviterId: string;
+  role: string;
   inviter?: {
     id: string;
     name: string;
@@ -32,7 +35,13 @@ export default function PendingInvitationsPanel() {
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
+  const [processingToken, setProcessingToken] = useState<string | null>(null);
+  const [debugInfo, setDebugInfo] = useState<any>(null);
   const router = useRouter();
+
+  // TEST MODE: Set to true to show all invitations regardless of email
+  const TEST_MODE = true;
 
   useEffect(() => {
     const fetchInvitations = async () => {
@@ -40,16 +49,48 @@ export default function PendingInvitationsPanel() {
         setLoading(true);
         setError(null);
         
-        console.log('Fetching pending invitations...');
-        const response = await fetch('/api/invitations?status=PENDING');
+        // Get current user info first
+        const { data } = await supabaseClient.auth.getSession();
+        const session = data.session;
+        const userEmail = session?.user?.email || null;
+        setCurrentUserEmail(userEmail);
         
-        if (!response.ok) {
-          throw new Error(`Failed to fetch invitations: ${response.status}`);
+        console.log('Current user email:', userEmail);
+        
+        // Direct query to get all pending invitations
+        const { data: allInvitations, error: queryError } = await supabaseClient
+          .from('Invitation')
+          .select(`
+            *,
+            inviter:inviterId(id, name, email),
+            household:householdId(id, name, address)
+          `)
+          .eq('status', 'PENDING');
+        
+        if (queryError) {
+          console.error('Supabase query error:', queryError);
+          throw queryError;
         }
         
-        const data = await response.json();
-        console.log('Invitations data:', data);
-        setInvitations(data);
+        console.log('All pending invitations:', allInvitations);
+        
+        // Store debug info
+        setDebugInfo({
+          userEmail: userEmail || 'Not logged in',
+          allInvitations: allInvitations || []
+        });
+        
+        // In test mode, show all invitations
+        // In normal mode, filter to only show invitations for current user
+        if (TEST_MODE) {
+          setInvitations(allInvitations || []);
+        } else {
+          setInvitations(
+            allInvitations?.filter(inv => 
+              userEmail && inv.email.toLowerCase() === userEmail.toLowerCase()
+            ) || []
+          );
+        }
       } catch (error) {
         console.error('Error fetching invitations:', error);
         setError(error instanceof Error ? error.message : 'Unknown error occurred');
@@ -61,39 +102,87 @@ export default function PendingInvitationsPanel() {
     fetchInvitations();
   }, []);
 
-  const handleAccept = async (token: string) => {
+  const handleAccept = async (invitation: Invitation) => {
     try {
-      const response = await fetch(`/api/invitations`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ token }),
-      });
+      setProcessingToken(invitation.token);
+      console.log('Accepting invitation with token:', invitation.token);
       
-      if (response.ok) {
-        const data = await response.json();
-        // Refresh invitations
-        setInvitations(invitations.filter(inv => inv.token !== token));
+      // First update the invitation status
+      const { error: updateError } = await supabaseClient
+        .from('Invitation')
+        .update({
+          status: 'ACCEPTED',
+          updatedAt: new Date().toISOString(),
+          respondedAt: new Date().toISOString()
+        })
+        .eq('id', invitation.id);
         
-        // Redirect to dashboard or chat
-        if (data.redirectTo) {
-          router.push(data.redirectTo);
-        } else {
-          router.push('/dashboard');
-        }
-      } else {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to accept invitation');
+      if (updateError) {
+        throw updateError;
       }
+      
+      // Then add user to the household
+      const { data: sessionData } = await supabaseClient.auth.getSession();
+      if (!sessionData.session?.user?.id) {
+        throw new Error('User not authenticated');
+      }
+      
+      const userId = sessionData.session.user.id;
+      const membershipId = crypto.randomUUID();
+      
+      const { error: membershipError } = await supabaseClient
+        .from('HouseholdUser')
+        .insert({
+          id: membershipId,
+          userId: userId,
+          householdId: invitation.householdId,
+          role: invitation.role,
+          joinedAt: new Date().toISOString()
+        });
+        
+      if (membershipError) {
+        throw membershipError;
+      }
+      
+      // Success!
+      setInvitations(invitations.filter(inv => inv.id !== invitation.id));
+      alert(`You've successfully joined ${invitation.household?.name || 'the household'}!`);
+      
+      // Redirect to chat
+      router.push('/chat');
     } catch (error) {
       console.error('Error accepting invitation:', error);
       setError(error instanceof Error ? error.message : 'Failed to accept invitation');
+      alert(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setProcessingToken(null);
     }
   };
   
   const handleViewDetails = (token: string) => {
     router.push(`/invite?token=${token}`);
+  };
+
+  // Debug panel - remove in production
+  const renderDebugPanel = () => {
+    if (!debugInfo) return null;
+    
+    return (
+      <div className="mt-4 p-3 bg-yellow-50 dark:bg-yellow-900/30 rounded-md text-xs">
+        <h4 className="font-bold mb-1">Debug Info:</h4>
+        <p>Your email: {debugInfo.userEmail}</p>
+        <p>Invitations found: {debugInfo.allInvitations.length}</p>
+        {TEST_MODE && (
+          <p className="text-red-500 font-bold">TEST MODE ENABLED - Showing all invitations</p>
+        )}
+        <details>
+          <summary>Show details</summary>
+          <pre className="mt-2 overflow-auto max-h-40">
+            {JSON.stringify(debugInfo, null, 2)}
+          </pre>
+        </details>
+      </div>
+    );
   };
 
   if (loading) {
@@ -110,14 +199,28 @@ export default function PendingInvitationsPanel() {
     return (
       <Card title="Pending Invitations">
         <div className="p-4 text-red-500 dark:text-red-400">
-          Error loading invitations: {error}
+          <p>Error loading invitations: {error}</p>
+          <button 
+            onClick={() => window.location.reload()}
+            className="mt-2 text-blue-500 dark:text-blue-400 underline"
+          >
+            Refresh
+          </button>
         </div>
+        {renderDebugPanel()}
       </Card>
     );
   }
 
   if (invitations.length === 0) {
-    return null; // Don't show anything if there are no invitations
+    return (
+      <Card title="Pending Invitations">
+        <div className="p-4 text-gray-500">
+          No pending invitations found.
+          {renderDebugPanel()}
+        </div>
+      </Card>
+    );
   }
 
   return (
@@ -134,6 +237,9 @@ export default function PendingInvitationsPanel() {
                   {invitation.inviter?.name || 'Someone'} invited you to join {invitation.household?.name || 'a household'}
                 </h3>
                 <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                  Sent to: {invitation.email}
+                </p>
+                <p className="text-sm text-gray-600 dark:text-gray-400">
                   Role: {invitation.role?.charAt(0)?.toUpperCase() + invitation.role?.slice(1)?.toLowerCase() || 'Member'}
                 </p>
                 {invitation.message && (
@@ -146,7 +252,9 @@ export default function PendingInvitationsPanel() {
                 <Button
                   variant="primary"
                   size="sm"
-                  onClick={() => handleAccept(invitation.token)}
+                  onClick={() => handleAccept(invitation)}
+                  isLoading={processingToken === invitation.token}
+                  disabled={processingToken !== null}
                 >
                   Accept
                 </Button>
@@ -154,6 +262,7 @@ export default function PendingInvitationsPanel() {
                   variant="outline"
                   size="sm"
                   onClick={() => handleViewDetails(invitation.token)}
+                  disabled={processingToken !== null}
                 >
                   Details
                 </Button>
@@ -162,6 +271,7 @@ export default function PendingInvitationsPanel() {
           </div>
         ))}
       </div>
+      {renderDebugPanel()}
     </Card>
   );
 }
