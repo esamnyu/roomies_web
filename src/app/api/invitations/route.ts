@@ -1,11 +1,12 @@
 // src/app/api/invitations/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from "next-auth/next";
-import { authOptions } from "@/app/api/auth/[...nextauth]/route"; // Adjust path if needed
+import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { cookies } from 'next/headers';
 import { randomBytes } from 'crypto';
 import { generateUUID } from '@/lib/utils';
+import { sendInvitationEmail } from '@/lib/email';
 
 // Generate a secure random token
 function generateToken(length: number = 32): string {
@@ -33,7 +34,7 @@ export async function GET(request: NextRequest) {
     let supabase;
     try {
       console.log('[Invitations API] Initializing Supabase client');
-      const cookieStore = cookies(); // Removed 'await' here
+      const cookieStore = cookies();
       supabase = createRouteHandlerClient({ cookies: () => cookieStore });
       console.log('[Invitations API] Supabase client created successfully');
     } catch (clientError) {
@@ -60,7 +61,18 @@ export async function GET(request: NextRequest) {
       try {
         const { data: invitation, error } = await supabase
           .from('Invitation')
-          .select('id, email, householdId, role, status, expiresAt')
+          .select(`
+            id, 
+            email, 
+            householdId, 
+            role, 
+            status, 
+            expiresAt,
+            createdAt,
+            message,
+            household:householdId(id, name, address),
+            inviter:inviterId(id, name, email, avatar)
+          `)
           .eq('token', tokenParam)
           .single();
         
@@ -87,6 +99,16 @@ export async function GET(request: NextRequest) {
         
         if (expiry < now) {
           console.log('[Invitations API] Invitation has expired');
+          
+          // Auto-update status to EXPIRED
+          await supabase
+            .from('Invitation')
+            .update({ 
+              status: 'EXPIRED', 
+              updatedAt: now.toISOString()
+            })
+            .eq('id', invitation.id);
+            
           return NextResponse.json({ error: 'Invitation has expired' }, { status: 410 });
         }
         
@@ -98,7 +120,7 @@ export async function GET(request: NextRequest) {
           }, { status: 410 });
         }
         
-        // Return the invitation details (without sensitive info)
+        // Return the invitation details (without sensitive info like the token)
         console.log('[Invitations API] Returning valid invitation data');
         return NextResponse.json({
           id: invitation.id,
@@ -106,7 +128,11 @@ export async function GET(request: NextRequest) {
           householdId: invitation.householdId,
           role: invitation.role,
           status: invitation.status,
-          expiresAt: invitation.expiresAt
+          expiresAt: invitation.expiresAt,
+          message: invitation.message,
+          createdAt: invitation.createdAt,
+          household: invitation.household,
+          inviter: invitation.inviter
         });
       } catch (error) {
         console.error('[Invitations API] Error validating invitation:', error);
@@ -121,7 +147,7 @@ export async function GET(request: NextRequest) {
       .select(`
         *,
         household:householdId(*),
-        sender:inviterId(id, name, email, avatar)
+        inviter:inviterId(id, name, email, avatar)
       `);
     
     if (householdId) {
@@ -193,15 +219,6 @@ export async function POST(request: NextRequest) {
   console.log('[Invitations API] POST request received');
   
   try {
-    // Log Next.js and Node versions
-    console.log('[Invitations API] Node version:', process.version);
-    console.log('[Invitations API] Next.js runtime:', process.env.NEXT_RUNTIME || 'unknown');
-    
-    // Log detailed information about the request
-    console.log('[Invitations API] Request method:', request.method);
-    console.log('[Invitations API] Request path:', request.nextUrl.pathname);
-    console.log('[Invitations API] Request headers:', JSON.stringify([...request.headers.entries()]));
-    
     // Get Next-Auth session for authentication
     console.log('[Invitations API] Getting Next-Auth session');
     const session = await getServerSession(authOptions);
@@ -219,7 +236,7 @@ export async function POST(request: NextRequest) {
     let supabase;
     try {
       console.log('[Invitations API] Initializing Supabase client');
-      const cookieStore = cookies(); // Removed 'await' here
+      const cookieStore = cookies();
       supabase = createRouteHandlerClient({ cookies: () => cookieStore });
       console.log('[Invitations API] Supabase client created successfully');
     } catch (clientError) {
@@ -279,7 +296,7 @@ export async function POST(request: NextRequest) {
     console.log('[Invitations API] Looking up user ID by email:', session.user.email);
     const { data: userData, error: userError } = await supabase
       .from('User')
-      .select('id')
+      .select('id, name')
       .eq('email', session.user.email)
       .single();
       
@@ -380,7 +397,7 @@ export async function POST(request: NextRequest) {
       // Continue anyway - this is not a critical error
     }
     
-    // For example, before creating the invitation:
+    // All validations passed, create the invitation
     console.log('[Invitations API] All validations passed, creating invitation');
     
     // Generate a unique ID for the invitation
@@ -428,12 +445,55 @@ export async function POST(request: NextRequest) {
       
       console.log('[Invitations API] Invitation created successfully:', invitation.id);
       
-      // Return response
-      console.log('[Invitations API] Returning success response');
-      return NextResponse.json({
-        ...invitation,
-        message: 'Invitation created successfully'
-      }, { status: 201 });
+      // Generate invitation link
+      const baseUrl = process.env.NEXT_PUBLIC_APP_URL || `${request.nextUrl.protocol}//${request.nextUrl.host}`;
+      const invitationLink = `${baseUrl}/invite?token=${token}`;
+      console.log('[Invitations API] Generated invitation link:', invitationLink);
+      
+      // Get household information for the email
+      const { data: household, error: householdError } = await supabase
+        .from('Household')
+        .select('name')
+        .eq('id', householdId)
+        .single();
+      
+      if (householdError) {
+        console.error('[Invitations API] Error fetching household info:', householdError);
+      }
+      
+      // Send invitation email
+      try {
+        console.log('[Invitations API] Sending invitation email to:', email);
+        
+        const emailSent = await sendInvitationEmail({
+          to: email,
+          inviterName: userData.name || session.user.name || session.user.email || 'A user',
+          householdName: household?.name || 'a household',
+          invitationLink,
+          role,
+          message: message || undefined
+        });
+        
+        console.log('[Invitations API] Email sent:', emailSent);
+        
+        // Return response with the invitation link included
+        return NextResponse.json({
+          ...invitation,
+          invitationLink,
+          message: 'Invitation created successfully',
+          emailSent
+        }, { status: 201 });
+      } catch (emailError) {
+        console.error('[Invitations API] Error sending email:', emailError);
+        
+        // Still return success, but note that email failed
+        return NextResponse.json({
+          ...invitation,
+          invitationLink,
+          message: 'Invitation created successfully, but failed to send email notification',
+          emailSent: false
+        }, { status: 201 });
+      }
     } catch (dbError) {
       console.error('[Invitations API] Database error creating invitation:', dbError);
       return NextResponse.json({ error: 'Database error' }, { status: 500 });
@@ -476,7 +536,7 @@ export async function PATCH(request: NextRequest) {
     let supabase;
     try {
       console.log('[Invitations API] Initializing Supabase client');
-      const cookieStore = cookies(); // Removed 'await' here
+      const cookieStore = cookies();
       supabase = createRouteHandlerClient({ cookies: () => cookieStore });
       console.log('[Invitations API] Supabase client created successfully');
     } catch (clientError) {
@@ -637,7 +697,21 @@ export async function PATCH(request: NextRequest) {
           return NextResponse.json({ error: 'Failed to add user to household' }, { status: 500 });
         }
         
+        // Get household details to include in response
+        const { data: household } = await supabase
+          .from('Household')
+          .select('name')
+          .eq('id', invitation.householdId)
+          .single();
+        
         console.log('[Invitations API] User successfully added to household');
+        
+        return NextResponse.json({
+          message: `Invitation accepted successfully`,
+          invitation: updatedInvitation,
+          household: household || { name: 'Household' },
+          redirectTo: `/dashboard/${invitation.householdId}`
+        });
       }
       
       return NextResponse.json({
@@ -654,6 +728,39 @@ export async function PATCH(request: NextRequest) {
       error: 'Internal server error',
       message: error instanceof Error ? error.message : 'Unknown error'
     }, { status: 500 });
+  }
+}
+
+// GET /api/invitations/count - Get pending invitations count
+export async function GET_COUNT(request: NextRequest) {
+  try {
+    // Get Next-Auth session for authentication
+    const session = await getServerSession(authOptions);
+    
+    if (!session || !session.user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    
+    // Create Supabase client
+    const cookieStore = cookies();
+    const supabase = createRouteHandlerClient({ cookies: () => cookieStore });
+    
+    // Get the count of pending invitations for the user
+    const { count, error } = await supabase
+      .from('Invitation')
+      .select('*', { count: 'exact', head: true })
+      .eq('email', session.user.email)
+      .eq('status', 'PENDING');
+    
+    if (error) {
+      console.error('Error fetching invitation count:', error);
+      return NextResponse.json({ error: 'Failed to fetch invitation count' }, { status: 500 });
+    }
+    
+    return NextResponse.json({ count: count || 0 });
+  } catch (error) {
+    console.error('Error in invitation count API:', error);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
 
@@ -688,7 +795,7 @@ export async function PUT(request: NextRequest) {
     let supabase;
     try {
       console.log('[Invitations API] Initializing Supabase client');
-      const cookieStore = cookies(); // Removed 'await' here
+      const cookieStore = cookies();
       supabase = createRouteHandlerClient({ cookies: () => cookieStore });
       console.log('[Invitations API] Supabase client created successfully');
     } catch (clientError) {
@@ -731,6 +838,16 @@ export async function PUT(request: NextRequest) {
       
       if (expiry < now) {
         console.log('[Invitations API] Invitation has expired');
+        
+        // Update status to EXPIRED
+        await supabase
+          .from('Invitation')
+          .update({ 
+            status: 'EXPIRED', 
+            updatedAt: now.toISOString()
+          })
+          .eq('id', invitation.id);
+          
         return NextResponse.json({ error: 'Invitation has expired' }, { status: 410 });
       }
       
@@ -743,13 +860,25 @@ export async function PUT(request: NextRequest) {
       }
       
       // Check if the user's email matches the invitation email
+      // Get the request body to see if we're trying to accept with a different email
+      let claimWithCurrentEmail = false;
+      try {
+        const requestBody = await request.json();
+        claimWithCurrentEmail = !!requestBody.claimWithCurrentEmail;
+      } catch (e) {
+        // No body or invalid JSON, so no claim requested
+      }
+      
       const userEmail = session.user.email || '';
-      if (invitation.email.toLowerCase() !== userEmail.toLowerCase()) {
+      if (invitation.email.toLowerCase() !== userEmail.toLowerCase() && !claimWithCurrentEmail) {
         console.log('[Invitations API] Email mismatch - access denied');
         console.log('[Invitations API] Invitation email:', invitation.email);
         console.log('[Invitations API] User email:', userEmail);
         return NextResponse.json({ 
-          error: 'This invitation was sent to a different email address'
+          error: 'This invitation was sent to a different email address',
+          emailMismatch: true,
+          invitationEmail: invitation.email,
+          currentEmail: userEmail
         }, { status: 403 });
       }
       
@@ -810,7 +939,8 @@ export async function PUT(request: NextRequest) {
           .update({ 
             status: 'ACCEPTED', 
             updatedAt: now.toISOString(),
-            respondedAt: now.toISOString()
+            respondedAt: now.toISOString(),
+            notes: claimWithCurrentEmail ? `Claimed by ${session.user.email} (original recipient: ${invitation.email})` : undefined
           })
           .eq('id', invitation.id);
         
@@ -821,7 +951,8 @@ export async function PUT(request: NextRequest) {
         return NextResponse.json({ 
           message: 'You are already a member of this household',
           role: existingMembership.role,
-          householdId: invitation.householdId
+          householdId: invitation.householdId,
+          redirectTo: `/dashboard/${invitation.householdId}`
         });
       }
       
@@ -832,7 +963,8 @@ export async function PUT(request: NextRequest) {
         .update({ 
           status: 'ACCEPTED', 
           updatedAt: now.toISOString(),
-          respondedAt: now.toISOString()
+          respondedAt: now.toISOString(),
+          notes: claimWithCurrentEmail ? `Claimed by ${session.user.email} (original recipient: ${invitation.email})` : undefined
         })
         .eq('id', invitation.id);
       
@@ -878,7 +1010,8 @@ export async function PUT(request: NextRequest) {
         householdId: invitation.householdId,
         householdName: household?.name || 'Household',
         role: invitation.role,
-        joinedAt: now.toISOString()
+        joinedAt: now.toISOString(),
+        redirectTo: `/dashboard/${invitation.householdId}`
       });
     } catch (error) {
       console.error('[Invitations API] Error processing invitation acceptance:', error);

@@ -229,7 +229,7 @@ export default function DashboardLayout({
                     </Link>
                   ))}
                   
-                  {/* Notification Item for Mobile Menu */}
+                  {/* Invitation Item for Mobile Menu */}
                   <div className="relative">
                     {invitationCount > 0 && (
                       <span className="absolute -top-1 left-3 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">
@@ -237,9 +237,9 @@ export default function DashboardLayout({
                       </span>
                     )}
                     <Link
-                      href="/dashboard"
+                      href="/invitations"
                       className={`${
-                        pathname === '/dashboard'
+                        pathname === '/invitations'
                           ? 'bg-blue-50 dark:bg-blue-900 text-blue-700 dark:text-blue-200'
                           : 'text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
                       } group flex items-center px-4 py-3 text-base font-medium rounded-md`}
@@ -249,7 +249,7 @@ export default function DashboardLayout({
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
                         </svg>
                       </span>
-                      Notifications
+                      Invitations
                     </Link>
                   </div>
                 </div>
@@ -323,7 +323,7 @@ export default function DashboardLayout({
                 </Link>
               ))}
               
-              {/* Notification Item for Desktop Sidebar */}
+              {/* Invitation Item for Desktop Sidebar */}
               <div className="relative">
                 {invitationCount > 0 && (
                   <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">
@@ -331,9 +331,9 @@ export default function DashboardLayout({
                   </span>
                 )}
                 <Link
-                  href="/dashboard"
+                  href="/invitations"
                   className={`${
-                    pathname === '/dashboard'
+                    pathname === '/invitations'
                       ? 'bg-blue-50 dark:bg-blue-900 text-blue-700 dark:text-blue-200'
                       : 'text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
                   } group flex items-center px-3 py-3 text-sm font-medium rounded-md`}
@@ -343,7 +343,7 @@ export default function DashboardLayout({
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
                     </svg>
                   </span>
-                  Notifications
+                  Invitations
                 </Link>
               </div>
             </nav>

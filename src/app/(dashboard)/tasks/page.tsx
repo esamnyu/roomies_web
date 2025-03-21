@@ -354,8 +354,7 @@ const handleUpdateTask = (updatedTask: Task | NewTask) => {
                 onCancel={() => {
                   setShowTaskForm(false);
                   setCurrentTask(null);
-                }}
-              />
+                } } householdId={''}              />
             </div>
           </div>
         </div>
