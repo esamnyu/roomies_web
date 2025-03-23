@@ -1,0 +1,665 @@
+// Consolidated 7 files from the "lib" folder
+// This file contains all code files within the "lib" folder and its subfolders.
+
+// Directory: lib, File: chat.ts
+// File Type: ts
+```typescript
+// src/lib/chat.ts
+import { supabaseClient } from './supabase';
+import { generateUUID } from '@/lib/utils';
+
+// Types
+export interface Message {
+  id: string;
+  householdId: string;
+  senderId: string;
+  content: string;
+  contentType?: string;
+  createdAt: string;
+  updatedAt: string;
+  sender?: {
+    id: string;
+    name: string;
+    avatar?: string;
+  };
+  readReceipts?: ReadReceipt[];
+}
+
+export interface ReadReceipt {
+  id: string;
+  messageId: string;
+  userId: string;
+  readAt: string;
+}
+
+// Get messages for a household
+export async function getHouseholdMessages(householdId: string): Promise<Message[]> {
+  console.log(`Fetching messages for household: ${householdId}`);
+  
+  try {
+    const { data, error } = await supabaseClient
+      .from('Message')
+      .select(`
+        *,
+        sender:senderId(id, name, avatar),
+        readReceipts:MessageReadReceipt(id, userId, readAt)
+      `)
+      .eq('householdId', householdId)
+      .order('createdAt', { ascending: true });
+
+    if (error) {
+      console.error('Error fetching messages:', error);
+      return [];
+    }
+
+    console.log(`Retrieved ${data?.length || 0} messages for household ${householdId}`);
+    return data || [];
+  } catch (err) {
+    console.error('Unexpected error fetching messages:', err);
+    return [];
+  }
+}
+
+// Send a message to a household
+export async function sendMessage(householdId: string, senderId: string, content: string): Promise<Message | null> {
+  // Generate a UUID for the message ID
+  const messageId = generateUUID();
+  const now = new Date().toISOString();
+  
+  console.log(`Sending message with ID: ${messageId} to household: ${householdId}`);
+  
+  try {
+    const { data, error } = await supabaseClient
+      .from('Message')
+      .insert([
+        {
+          id: messageId,
+          householdId,
+          senderId,
+          content,
+          contentType: 'TEXT',
+          createdAt: now,
+          updatedAt: now
+        }
+      ])
+      .select(`
+        *,
+        sender:senderId(id, name, avatar)
+      `)
+      .single();
+  
+    if (error) {
+      console.error(`Error sending message to household ${householdId}:`, error);
+      // Provide more detailed error information for debugging
+      if (error.code === '42501') {
+        console.error('Permission denied - check RLS policies');
+      } else if (error.code === '23505') {
+        console.error('Duplicate ID - UUID collision');
+      } else if (error.code === '42P01') {
+        console.error('Table does not exist');
+      }
+      return null;
+    }
+  
+    console.log('Message sent successfully:', data);
+    return data;
+  } catch (err) {
+    console.error('Unexpected error sending message:', err);
+    return null;
+  }
+}
+
+/**
+ * Send a welcome message when a user joins a household
+ */
+export async function sendWelcomeMessage(householdId: string, userId: string, userName: string): Promise<Message | null> {
+  const messageId = generateUUID();
+  const now = new Date().toISOString();
+  
+  try {
+    const { data, error } = await supabaseClient
+      .from('Message')
+      .insert([
+        {
+          id: messageId,
+          householdId,
+          senderId: userId, // System or admin user ID
+          content: `👋 ${userName} has joined the household! Say hello!`,
+          contentType: 'TEXT',
+          createdAt: now,
+          updatedAt: now
+        }
+      ])
+      .select(`*, sender:senderId(id, name, avatar)`)
+      .single();
+  
+    if (error) {
+      console.error(`Error sending welcome message:`, error);
+      return null;
+    }
+  
+    return data;
+  } catch (err) {
+    console.error('Error sending welcome message:', err);
+    return null;
+  }
+}
+
+// Mark message as read
+export async function markMessageAsRead(messageId: string, userId: string): Promise<ReadReceipt | null> {
+  console.log(`Marking message ${messageId} as read by user ${userId}`);
+  
+  try {
+    // Check if a read receipt already exists
+    const { data: existingReceipt, error: receiptError } = await supabaseClient
+      .from('MessageReadReceipt')
+      .select('id, messageId, userId, readAt')
+      .eq('messageId', messageId)
+      .eq('userId', userId)
+      .single();
+    
+    if (!receiptError && existingReceipt) {
+      // Already marked as read
+      console.log(`Message ${messageId} already marked as read`);
+      return existingReceipt as ReadReceipt;
+    }
+    
+    // Generate a UUID for the receipt
+    const receiptId = generateUUID();
+    
+    // Create a new read receipt
+    const { data, error } = await supabaseClient
+      .from('MessageReadReceipt')
+      .insert([
+        {
+          id: receiptId,
+          messageId,
+          userId,
+          readAt: new Date().toISOString()
+        }
+      ])
+      .select()
+      .single();
+    
+    if (error) {
+      console.error('Error marking message as read:', error);
+      if (error.code === '42501') {
+        console.error('Permission denied - check RLS policies');
+      }
+      return null;
+    }
+    
+    console.log(`Successfully marked message ${messageId} as read`);
+    return data as ReadReceipt;
+  } catch (err) {
+    console.error('Unexpected error marking message as read:', err);
+    return null;
+  }
+}
+
+// Get unread messages count for user in a household
+export async function getUnreadMessagesCount(householdId: string, userId: string): Promise<number> {
+  console.log(`Calculating unread messages for user ${userId} in household ${householdId}`);
+  
+  try {
+    // Get all messages for the household
+    const { data: messages, error: messagesError } = await supabaseClient
+      .from('Message')
+      .select('id')
+      .eq('householdId', householdId)
+      .neq('senderId', userId); // Exclude messages sent by the current user
+    
+    if (messagesError || !messages) {
+      console.error('Error fetching messages for unread count:', messagesError);
+      return 0;
+    }
+    
+    if (messages.length === 0) {
+      return 0;
+    }
+    
+    // Get read receipts for these messages
+    const messageIds = messages.map(msg => msg.id);
+    const { data: receipts, error: receiptsError } = await supabaseClient
+      .from('MessageReadReceipt')
+      .select('messageId')
+      .eq('userId', userId)
+      .in('messageId', messageIds);
+    
+    if (receiptsError) {
+      console.error('Error fetching read receipts:', receiptsError);
+      return 0;
+    }
+    
+    // Count unread messages
+    const readMessageIds = receipts?.map(receipt => receipt.messageId) || [];
+    const unreadCount = messages.filter(msg => !readMessageIds.includes(msg.id)).length;
+    
+    console.log(`User ${userId} has ${unreadCount} unread messages in household ${householdId}`);
+    return unreadCount;
+  } catch (err) {
+    console.error('Unexpected error getting unread count:', err);
+    return 0;
+  }
+}
+
+export function subscribeToMessages(householdId: string, callback: (message: Message) => void) {
+    console.log(`Setting up message subscription for household: ${householdId}`);
+    
+    try {
+      // Use a unique channel name that includes the household ID
+      const channel = supabaseClient
+        .channel(`messages-${householdId}`)
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'Message',
+            filter: `householdId=eq.${householdId}`
+          },
+          async (payload) => {
+            console.log('Subscription received new message:', payload);
+            
+            // Fetch the complete message with sender information
+            try {
+              const { data, error } = await supabaseClient
+                .from('Message')
+                .select(`
+                  *,
+                  sender:senderId(id, name, avatar)
+                `)
+                .eq('id', payload.new.id)
+                .single();
+                
+              if (!error && data) {
+                console.log('Complete message data:', data);
+                callback(data as Message);
+              } else {
+                // Log error but still use the payload data
+                console.error('Error fetching complete message:', error);
+                // Convert the payload to match the Message interface as closely as possible
+                const simpleMessage: Message = {
+                  id: payload.new.id,
+                  householdId: payload.new.householdId,
+                  senderId: payload.new.senderId,
+                  content: payload.new.content,
+                  contentType: payload.new.contentType || 'TEXT',
+                  createdAt: payload.new.createdAt || new Date().toISOString(),
+                  updatedAt: payload.new.updatedAt || new Date().toISOString()
+                };
+                callback(simpleMessage);
+              }
+            } catch (err) {
+              console.error('Error in subscription callback:', err);
+              // Still try to use the payload even if the fetch fails
+              callback(payload.new as Message);
+            }
+          }
+        )
+        .subscribe((status) => {
+          console.log(`Subscription status for household ${householdId}:`, status);
+        });
+    
+      return () => {
+        console.log(`Removing subscription for household: ${householdId}`);
+        supabaseClient.removeChannel(channel);
+      };
+    } catch (error) {
+      console.error('Error setting up message subscription:', error);
+      // Return a no-op cleanup function
+      return () => {};
+    }
+}
+```
+
+// Directory: lib, File: databaseReadiness.ts
+// File Type: ts
+```typescript
+// src/lib/databaseReadiness.ts
+import { supabaseClient } from './supabase';
+
+/**
+ * Check if the Message table is ready to use
+ * @returns {Promise<boolean>} True if the table exists and is accessible
+ */
+export async function isMessageTableReady(): Promise<boolean> {
+  try {
+    console.log('Checking if Message table is ready...');
+    
+    // Get the current user session first to ensure authenticated
+    const { data: { session } } = await supabaseClient.auth.getSession();
+    if (!session) {
+      console.error('No active session for database check');
+      return false;
+    }
+    
+    // Try to select a single record from the Message table
+    const { data, error } = await supabaseClient
+      .from('Message')
+      .select('id')
+      .limit(1);
+    
+    console.log('Message table check result:', { data, error });
+    
+    // If there's no error, the table exists and is accessible
+    if (!error) {
+      console.log('Message table is ready to use');
+      return true;
+    }
+    
+    // Log the specific error
+    console.error('Message table not ready:', error.message, error.details, error.hint, error.code);
+    return false;
+  } catch (err) {
+    console.error('Error checking Message table:', err);
+    return false;
+  }
+}
+
+/**
+ * Check if all chat-related tables are ready to use
+ * @returns {Promise<{ready: boolean, tables: Record<string, boolean>}>} Status of all tables
+ */
+export async function areAllChatTablesReady(): Promise<{ready: boolean, tables: Record<string, boolean>}> {
+  try {
+    console.log('Checking if all chat tables are ready...');
+    
+    // Get the current user's session
+    const { data: { session } } = await supabaseClient.auth.getSession();
+    if (!session) {
+      console.error('No active session for database tables check');
+      return {
+        ready: false,
+        tables: {
+          message: false,
+          messageReadReceipt: false
+        }
+      };
+    }
+    
+    console.log('User session found:', session.user.id);
+    
+    // Check if Message table is ready
+    const isMessageReady = await isMessageTableReady();
+    
+    // Check MessageReadReceipt table
+    console.log('Checking if MessageReadReceipt table is ready...');
+    const { data: receiptData, error: receiptError } = await supabaseClient
+      .from('MessageReadReceipt')
+      .select('id')
+      .limit(1);
+    
+    console.log('MessageReadReceipt table check result:', { receiptData, receiptError });
+    
+    const isReceiptReady = !receiptError;
+    if (isReceiptReady) {
+      console.log('MessageReadReceipt table is ready to use');
+    } else {
+      console.error('MessageReadReceipt table not ready:', 
+        receiptError?.message, 
+        receiptError?.details, 
+        receiptError?.hint,
+        receiptError?.code
+      );
+    }
+    
+    // Overall readiness status
+    const allReady = isMessageReady && isReceiptReady;
+    
+    console.log('Chat tables readiness summary:', {
+      ready: allReady,
+      message: isMessageReady,
+      messageReadReceipt: isReceiptReady
+    });
+    
+    return {
+      ready: allReady,
+      tables: {
+        message: isMessageReady,
+        messageReadReceipt: isReceiptReady
+      }
+    };
+  } catch (err) {
+    console.error('Error checking chat tables:', err);
+    return {
+      ready: false,
+      tables: {
+        message: false,
+        messageReadReceipt: false
+      }
+    };
+  }
+}
+```
+
+// Directory: lib, File: email.ts
+// File Type: ts
+```typescript
+// src/lib/email.ts - temporary version without SendGrid dependency
+
+interface InvitationEmailParams {
+  to: string;
+  inviterName: string;
+  householdName: string;
+  invitationLink: string;
+  role: string;
+  message?: string;
+  expirationDays?: number;
+}
+
+/**
+ * Mock implementation that logs emails instead of sending them
+ */
+export async function sendInvitationEmail({
+  to,
+  inviterName,
+  householdName,
+  invitationLink,
+  role,
+  message,
+  expirationDays = 7
+}: InvitationEmailParams): Promise<boolean> {
+  // Log what would have been sent
+  console.log('=== MOCK EMAIL SERVICE ===');
+  console.log(`Would send invitation email to: ${to}`);
+  console.log(`From: ${inviterName}`);
+  console.log(`Household: ${householdName}`);
+  console.log(`Role: ${role}`);
+  console.log(`Link: ${invitationLink}`);
+  if (message) console.log(`Message: ${message}`);
+  console.log(`Expires in: ${expirationDays} days`);
+  console.log('=========================');
+  
+  // Return success since we're just mocking
+  return true;
+}
+```
+
+// Directory: lib, File: prisma.ts
+// File Type: ts
+```typescript
+import { PrismaClient } from '@prisma/client'
+
+const globalForPrisma = global as unknown as {
+  prisma: PrismaClient | undefined
+}
+
+export const prisma = globalForPrisma.prisma ?? new PrismaClient()
+
+if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma
+```
+
+// Directory: lib, File: supabase.ts
+// File Type: ts
+```typescript
+// src/lib/supabase.ts
+import { createClient } from '@supabase/supabase-js';
+
+// Environment variables
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+// Check if we have the required environment variables
+if (!supabaseUrl || !supabaseAnonKey) {
+  console.error('Missing required Supabase environment variables');
+}
+
+// Client for browser usage (with anonymous key)
+export const supabaseClient = createClient(
+  supabaseUrl || '',
+  supabaseAnonKey || '',
+  {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+    }
+  }
+);
+
+// Admin client for server-side operations (with service role key)
+export const supabase = supabaseServiceKey 
+  ? createClient(
+      supabaseUrl || '',
+      supabaseServiceKey,
+      {
+        auth: {
+          autoRefreshToken: false,
+          persistSession: false
+        }
+      }
+    )
+  : supabaseClient; // Fall back to the client if no service key is provided
+```
+
+// Directory: lib, File: test-supabase.ts
+// File Type: ts
+```typescript
+// src/lib/test-supabase.js
+const { createClient } = require('@supabase/supabase-js');
+
+// Get environment variables
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+// Check if environment variables are available
+if (!supabaseUrl || !supabaseKey) {
+  console.error('❌ Missing Supabase environment variables!');
+  console.log('Make sure you have NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in your .env file');
+  process.exit(1);
+}
+
+// Initialize Supabase
+const supabase = createClient(supabaseUrl, supabaseKey);
+
+async function testSupabaseConnection() {
+  try {
+    console.log('Testing Supabase connection...');
+    
+    // Test a simple query - trying to access public schema information
+    const { data, error } = await supabase
+      .from('User')
+      .select('count()', { count: 'exact' });
+    
+    if (error) {
+      console.error('❌ Supabase query failed:', error.message);
+      
+      // Try a different approach - check if we can reach Supabase at all
+      const { data: healthData, error: healthError } = await supabase.rpc('get_service_status');
+      
+      if (healthError) {
+        console.error('❌ Could not connect to Supabase:', healthError.message);
+      } else {
+        console.log('✅ Supabase is reachable, but the query failed. This might be due to:');
+        console.log('  - The "User" table doesn\'t exist yet');
+        console.log('  - Permissions issues (Row Level Security)');
+        console.log('  - The table name is different from "User"');
+      }
+      
+      return false;
+    }
+    
+    console.log('✅ Supabase connection successful!');
+    console.log('Query result:', data);
+    return true;
+  } catch (err) {
+    console.error('❌ Unexpected error testing Supabase connection:', err);
+    return false;
+  }
+}
+
+// Run the test with environment variables loaded from .env
+require('dotenv').config();
+testSupabaseConnection();
+```
+
+// Directory: lib, File: utils.ts
+// File Type: ts
+```typescript
+// src/lib/utils.ts
+
+/**
+ * Generates a UUID v4 string
+ * This can be used for creating unique IDs for database records
+ * @returns {string} A UUID v4 string
+ */
+export function generateUUID(): string {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+      const r = Math.random() * 16 | 0;
+      const v = c === 'x' ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
+    });
+  }
+  
+  /**
+   * Format a date for display
+   * @param date Date to format
+   * @param includeTime Whether to include the time
+   * @returns Formatted date string
+   */
+  export function formatDate(date: Date | string, includeTime: boolean = false): string {
+    const dateObj = typeof date === 'string' ? new Date(date) : date;
+    
+    if (includeTime) {
+      return dateObj.toLocaleString();
+    }
+    
+    return dateObj.toLocaleDateString();
+  }
+  
+  /**
+   * Truncate a string to a specific length and add ellipsis if needed
+   * @param str String to truncate
+   * @param length Maximum length
+   * @returns Truncated string
+   */
+  export function truncate(str: string, length: number): string {
+    if (str.length <= length) return str;
+    return str.slice(0, length) + '...';
+  }
+  
+  /**
+   * Delay execution for a specified number of milliseconds
+   * Useful for throttling or creating intentional delays
+   * @param ms Milliseconds to delay
+   * @returns Promise that resolves after the specified time
+   */
+  export function delay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+  
+  /**
+   * Check if a value is empty (null, undefined, empty string, or empty array)
+   * @param value Value to check
+   * @returns True if the value is empty
+   */
+  export function isEmpty(value: any): boolean {
+    if (value === null || value === undefined) return true;
+    if (typeof value === 'string') return value.trim() === '';
+    if (Array.isArray(value)) return value.length === 0;
+    if (typeof value === 'object') return Object.keys(value).length === 0;
+    return false;
+  }
+```
+
