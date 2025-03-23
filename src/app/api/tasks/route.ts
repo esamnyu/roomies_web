@@ -3,11 +3,18 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/app/api/auth/[...nextauth]/route';
+import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { cookies } from 'next/headers';
 
 // GET /api/tasks
 export async function GET(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
+    // Use proper cookie handling - FIXED
+    const cookieStore = cookies();
+    const supabase = createRouteHandlerClient({ cookies: () => cookieStore });
+    
+    // Get user session from Supabase
+    const { data: { session } } = await supabase.auth.getSession();
     
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -21,54 +28,36 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Household ID is required' }, { status: 400 });
     }
     
-    // Check if user is a member of the household
-    const householdUser = await prisma.householdUser.findUnique({
-      where: {
-        userId_householdId: {
-          userId: session.user.id,
-          householdId: householdId,
-        },
-      },
-    });
+    // Check if user is a member of the household - using Supabase
+    const { data: householdUser, error: membershipError } = await supabase
+      .from('HouseholdUser')
+      .select('id, role')
+      .eq('userId', session.user.id)
+      .eq('householdId', householdId)
+      .single();
     
-    if (!householdUser) {
+    if (membershipError || !householdUser) {
       return NextResponse.json({ error: 'You are not a member of this household' }, { status: 403 });
     }
     
     // Fetch all tasks for the household
-    const tasks = await prisma.task.findMany({
-      where: {
-        householdId: householdId,
-      },
-      include: {
-        creator: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            avatar: true,
-          },
-        },
-        assignee: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            avatar: true,
-          },
-        },
-      },
-      orderBy: [
-        {
-          priority: 'desc', // URGENT, HIGH, MEDIUM, LOW
-        },
-        {
-          dueDate: 'asc', // Earlier dates first
-        },
-      ],
-    });
+    const { data: tasks, error: tasksError } = await supabase
+      .from('Task')
+      .select(`
+        *,
+        creator:creatorId(id, name, email, avatar),
+        assignee:assigneeId(id, name, email, avatar)
+      `)
+      .eq('householdId', householdId)
+      .order('priority', { ascending: false })
+      .order('dueDate', { ascending: true });
     
-    return NextResponse.json(tasks);
+    if (tasksError) {
+      console.error('Error fetching tasks:', tasksError);
+      return NextResponse.json({ error: 'Failed to fetch tasks' }, { status: 500 });
+    }
+    
+    return NextResponse.json(tasks || []);
   } catch (error) {
     console.error('Error fetching tasks:', error);
     return NextResponse.json({ error: 'Failed to fetch tasks' }, { status: 500 });
@@ -78,7 +67,12 @@ export async function GET(request: NextRequest) {
 // POST /api/tasks
 export async function POST(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
+    // Use proper cookie handling - FIXED
+    const cookieStore = cookies();
+    const supabase = createRouteHandlerClient({ cookies: () => cookieStore });
+    
+    // Get user session from Supabase
+    const { data: { session } } = await supabase.auth.getSession();
     
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -102,53 +96,46 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
     
-    // Check if user is a member of the household
-    const householdUser = await prisma.householdUser.findUnique({
-      where: {
-        userId_householdId: {
-          userId: session.user.id,
-          householdId: householdId,
-        },
-      },
-    });
+    // Check if user is a member of the household - using Supabase
+    const { data: householdUser, error: membershipError } = await supabase
+      .from('HouseholdUser')
+      .select('id, role')
+      .eq('userId', session.user.id)
+      .eq('householdId', householdId)
+      .single();
     
-    if (!householdUser) {
+    if (membershipError || !householdUser) {
       return NextResponse.json({ error: 'You are not a member of this household' }, { status: 403 });
     }
     
-    // Create the task
-    const task = await prisma.task.create({
-      data: {
-        title,
-        description,
-        status: status || 'PENDING',
-        priority: priority || 'MEDIUM',
-        creatorId: session.user.id,
-        assigneeId,
-        dueDate: dueDate ? new Date(dueDate) : undefined,
-        recurring: recurring || false,
-        recurrenceRule,
-        householdId,
-      },
-      include: {
-        creator: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            avatar: true,
-          },
-        },
-        assignee: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            avatar: true,
-          },
-        },
-      },
-    });
+    // Create the task using Supabase
+    const { data: task, error: taskError } = await supabase
+      .from('Task')
+      .insert([
+        {
+          title,
+          description,
+          status: status || 'PENDING',
+          priority: priority || 'MEDIUM',
+          creatorId: session.user.id,
+          assigneeId,
+          dueDate: dueDate ? new Date(dueDate).toISOString() : null,
+          recurring: recurring || false,
+          recurrenceRule,
+          householdId,
+        }
+      ])
+      .select(`
+        *,
+        creator:creatorId(id, name, email, avatar),
+        assignee:assigneeId(id, name, email, avatar)
+      `)
+      .single();
+    
+    if (taskError) {
+      console.error('Error creating task:', taskError);
+      return NextResponse.json({ error: 'Failed to create task' }, { status: 500 });
+    }
     
     return NextResponse.json(task);
   } catch (error) {
