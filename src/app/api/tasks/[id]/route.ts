@@ -1,124 +1,110 @@
-// src/app/api/tasks/[id]/route.ts
+// src/app/api/tasks/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { cookies } from 'next/headers';
+import { generateUUID } from '@/lib/utils';
 
-// GET /api/tasks/[id] - Get a specific task
-export async function GET(
-  request: NextRequest,
-  { params }: { params: { id: string } }
-) {
+// GET /api/tasks - Get all tasks for the household
+export async function GET(request: NextRequest) {
+  console.log('GET /api/tasks - Starting handler');
   try {
-    // Use proper cookie handling - FIXED
-    const cookieStore = cookies();
+    // DEBUG: Log cookie access
+    console.log('Getting Supabase client with cookies');
+    
+    // Using updated Next.js 15 approach for Supabase
+    const cookieStore = await cookies();
     const supabase = createRouteHandlerClient({ cookies: () => cookieStore });
     
-    // Get user session from Supabase
-    const { data: { session } } = await supabase.auth.getSession();
+    console.log('Fetching auth session');
+    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    
+    // Log authentication state
+    if (sessionError) {
+      console.error('Session error:', sessionError);
+      return NextResponse.json({ error: 'Authentication error' }, { status: 401 });
+    }
     
     if (!session) {
+      console.log('No active session found');
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
     
-    const taskId = params.id;
+    console.log('Authenticated as user:', session.user.id);
     
-    // Get the task using Supabase
-    const { data: task, error: taskError } = await supabase
-      .from('Task')
-      .select(`
-        *,
-        creator:creatorId(*),
-        assignee:assigneeId(*),
-        household:householdId(*)
-      `)
-      .eq('id', taskId)
-      .single();
+    // Rest of the function remains the same...
+    const url = new URL(request.url);
+    const householdId = url.searchParams.get('householdId');
     
-    if (taskError || !task) {
-      console.error('Error fetching task:', taskError);
-      return NextResponse.json({ error: 'Task not found' }, { status: 404 });
+    if (!householdId) {
+      return NextResponse.json({ error: 'Household ID is required' }, { status: 400 });
     }
     
-    // Check if the user is a member of the household that the task belongs to
-    const { data: householdUser, error: membershipError } = await supabase
-      .from('HouseholdUser')
-      .select('id, role')
-      .eq('userId', session.user.id)
-      .eq('householdId', task.householdId)
-      .single();
-    
-    if (membershipError || !householdUser) {
-      return NextResponse.json({ error: 'You are not a member of this household' }, { status: 403 });
-    }
-    
-    return NextResponse.json(task);
-  } catch (error) {
-    console.error('Error fetching task:', error);
-    return NextResponse.json({ error: 'Failed to fetch task' }, { status: 500 });
-  }
-}
-
-// PATCH /api/tasks/[id] - Update a specific task
-export async function PATCH(
-  request: NextRequest,
-  { params }: { params: { id: string } }
-) {
-  try {
-    // Use proper cookie handling - FIXED
-    const cookieStore = cookies();
-    const supabase = createRouteHandlerClient({ cookies: () => cookieStore });
-    
-    // Get user session from Supabase
-    const { data: { session } } = await supabase.auth.getSession();
-    
-    if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-    
-    const taskId = params.id;
-    const data = await request.json();
-    
-    // Get the current task to verify permissions
-    const { data: currentTask, error: taskError } = await supabase
-      .from('Task')
-      .select(`
-        *,
-        household:householdId(
-          id,
-          name
-        )
-      `)
-      .eq('id', taskId)
-      .single();
-    
-    if (taskError || !currentTask) {
-      return NextResponse.json({ error: 'Task not found' }, { status: 404 });
-    }
-    
-    // Check if user is a member of the household
+    // Check if the user is a member of the household
     const { data: membership, error: membershipError } = await supabase
       .from('HouseholdUser')
       .select('userId, role')
       .eq('userId', session.user.id)
-      .eq('householdId', currentTask.householdId)
+      .eq('householdId', householdId)
       .single();
     
     if (membershipError || !membership) {
       return NextResponse.json({ error: 'You are not a member of this household' }, { status: 403 });
     }
     
-    // Check if the user is the creator, assignee, or an admin of the household
-    const isCreator = currentTask.creatorId === session.user.id;
-    const isAssignee = currentTask.assigneeId === session.user.id;
-    const isAdmin = membership.role === 'ADMIN';
+    // Get all tasks for the household
+    const { data: tasks, error: tasksError } = await supabase
+      .from('Task')
+      .select(`
+        *,
+        creator:creatorId(id, name, avatar),
+        assignee:assigneeId(id, name, avatar)
+      `)
+      .eq('householdId', householdId)
+      .order('createdAt', { ascending: false });
     
-    if (!isCreator && !isAssignee && !isAdmin) {
-      return NextResponse.json({ 
-        error: 'You are not authorized to update this task' 
-      }, { status: 403 });
+    if (tasksError) {
+      console.error('Error fetching tasks:', tasksError);
+      return NextResponse.json({ error: 'Failed to fetch tasks' }, { status: 500 });
     }
     
-    // Extract the data we want to update
+    return NextResponse.json(tasks);
+  } catch (error) {
+    console.error('Error getting tasks:', error);
+    return NextResponse.json({ error: 'Failed to get tasks' }, { status: 500 });
+  }
+}
+
+// POST /api/tasks - Create a new task
+export async function POST(request: NextRequest) {
+  console.log('POST /api/tasks - Starting handler');
+  try {
+    // DEBUG: Log cookie access
+    console.log('Getting Supabase client with cookies');
+    
+    // Using updated Next.js 15 approach for Supabase
+    const cookieStore = await cookies();
+    const supabase = createRouteHandlerClient({ cookies: () => cookieStore });
+    
+    console.log('Fetching auth session');
+    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    
+    // Log authentication state
+    if (sessionError) {
+      console.error('Session error:', sessionError);
+      return NextResponse.json({ error: 'Authentication error' }, { status: 401 });
+    }
+    
+    if (!session) {
+      console.log('No active session found');
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    
+    console.log('Authenticated as user:', session.user.id);
+    
+    // Get task data from request body
+    const data = await request.json();
+    console.log('Task data received:', JSON.stringify(data));
+    
     const { 
       title, 
       description, 
@@ -127,123 +113,118 @@ export async function PATCH(
       assigneeId, 
       dueDate, 
       recurring, 
-      recurrenceRule 
+      recurrenceRule,
+      householdId 
     } = data;
     
-    // Prepare the update data
-    const updateData: any = {};
-    
-    if (title !== undefined) updateData.title = title;
-    if (description !== undefined) updateData.description = description;
-    if (status !== undefined) {
-      updateData.status = status;
-      
-      // If the task is being marked as completed, set the completedAt date
-      if (status === 'COMPLETED' && currentTask.status !== 'COMPLETED') {
-        updateData.completedAt = new Date().toISOString();
-      } 
-      // If the task is being un-completed, remove the completedAt date
-      else if (status !== 'COMPLETED' && currentTask.status === 'COMPLETED') {
-        updateData.completedAt = null;
-      }
-    }
-    if (priority !== undefined) updateData.priority = priority;
-    if (assigneeId !== undefined) updateData.assigneeId = assigneeId;
-    if (dueDate !== undefined) updateData.dueDate = dueDate ? new Date(dueDate).toISOString() : null;
-    if (recurring !== undefined) updateData.recurring = recurring;
-    if (recurrenceRule !== undefined) updateData.recurrenceRule = recurrenceRule;
-    
-    // Update the task using Supabase
-    const { data: updatedTask, error: updateError } = await supabase
-      .from('Task')
-      .update(updateData)
-      .eq('id', taskId)
-      .select(`
-        *,
-        creator:creatorId(*),
-        assignee:assigneeId(*)
-      `)
-      .single();
-    
-    if (updateError) {
-      console.error('Error updating task:', updateError);
-      return NextResponse.json({ error: 'Failed to update task' }, { status: 500 });
+    // Validate required fields
+    if (!title || !householdId) {
+      console.log('Missing required fields:', { title, householdId });
+      return NextResponse.json({ 
+        error: 'Title and household ID are required' 
+      }, { status: 400 });
     }
     
-    return NextResponse.json(updatedTask);
-  } catch (error) {
-    console.error('Error updating task:', error);
-    return NextResponse.json({ error: 'Failed to update task' }, { status: 500 });
-  }
-}
-
-// DELETE /api/tasks/[id] - Delete a specific task
-export async function DELETE(
-  request: NextRequest,
-  { params }: { params: { id: string } }
-) {
-  try {
-    // Use proper cookie handling - FIXED
-    const cookieStore = cookies();
-    const supabase = createRouteHandlerClient({ cookies: () => cookieStore });
-    
-    // Get user session from Supabase
-    const { data: { session } } = await supabase.auth.getSession();
-    
-    if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-    
-    const taskId = params.id;
-    
-    // Get the task to verify permissions
-    const { data: task, error: taskError } = await supabase
-      .from('Task')
-      .select(`
-        *,
-        household:householdId(id, name)
-      `)
-      .eq('id', taskId)
-      .single();
-    
-    if (taskError || !task) {
-      return NextResponse.json({ error: 'Task not found' }, { status: 404 });
-    }
-    
-    // Check if user is a member of the household and their role
+    // Rest of the function remains the same...
+    // Check if the user is a member of the household
+    console.log('Checking household membership for', session.user.id, 'in household', householdId);
     const { data: membership, error: membershipError } = await supabase
       .from('HouseholdUser')
       .select('userId, role')
       .eq('userId', session.user.id)
-      .eq('householdId', task.householdId)
+      .eq('householdId', householdId)
       .single();
     
-    if (membershipError || !membership) {
-      return NextResponse.json({ error: 'You are not a member of this household' }, { status: 403 });
+    if (membershipError) {
+      console.error('Membership check error:', membershipError);
+      return NextResponse.json({ 
+        error: 'Failed to verify household membership' 
+      }, { status: 500 });
     }
     
-    // Check if the user is the creator or an admin of the household
-    const isCreator = task.creatorId === session.user.id;
-    const isAdmin = membership.role === 'ADMIN';
-    
-    if (!isCreator && !isAdmin) {
-      return NextResponse.json({ error: 'You are not authorized to delete this task' }, { status: 403 });
+    if (!membership) {
+      console.log('User is not a member of this household');
+      return NextResponse.json({ 
+        error: 'You are not a member of this household' 
+      }, { status: 403 });
     }
     
-    // Delete the task using Supabase
-    const { error: deleteError } = await supabase
+    // Get creator info for the creatorName field
+    console.log('Fetching user profile for creator name');
+    const { data: userProfile, error: userError } = await supabase
+      .from('User')
+      .select('id, name')
+      .eq('id', session.user.id)
+      .single();
+    
+    if (userError) {
+      console.error('Error fetching user profile:', userError);
+    }
+    
+    // Get assignee info if applicable
+    let assigneeName = undefined;
+    if (assigneeId) {
+      console.log('Fetching assignee profile');
+      const { data: assignee, error: assigneeError } = await supabase
+        .from('User')
+        .select('id, name')
+        .eq('id', assigneeId)
+        .single();
+      
+      if (assigneeError) {
+        console.error('Error fetching assignee:', assigneeError);
+      } else if (assignee) {
+        assigneeName = assignee.name;
+      }
+    }
+    
+    // Generate a task ID
+    const taskId = generateUUID();
+    console.log('Generated task ID:', taskId);
+    
+    // Format the date if it exists
+    const formattedDueDate = dueDate ? new Date(dueDate).toISOString() : null;
+    
+    // Create the task
+    console.log('Inserting new task into database');
+    const taskData = {
+      id: taskId,
+      title,
+      description: description || null,
+      status: status || 'PENDING',
+      priority: priority || 'MEDIUM',
+      creatorId: session.user.id,
+      creatorName: userProfile?.name,
+      assigneeId: assigneeId || null,
+      assigneeName: assigneeName || null,
+      dueDate: formattedDueDate,
+      recurring: recurring || false,
+      recurrenceRule: recurrenceRule || null,
+      householdId,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    
+    console.log('Task data to insert:', JSON.stringify(taskData));
+    
+    const { data: task, error: insertError } = await supabase
       .from('Task')
-      .delete()
-      .eq('id', taskId);
+      .insert([taskData])
+      .select()
+      .single();
     
-    if (deleteError) {
-      console.error('Error deleting task:', deleteError);
-      return NextResponse.json({ error: 'Failed to delete task' }, { status: 500 });
+    if (insertError) {
+      console.error('Error creating task:', insertError);
+      return NextResponse.json({ error: 'Failed to create task' }, { status: 500 });
     }
     
-    return NextResponse.json({ message: 'Task deleted successfully' });
+    console.log('Task created successfully:', task.id);
+    return NextResponse.json(task, { status: 201 });
   } catch (error) {
-    console.error('Error deleting task:', error);
-    return NextResponse.json({ error: 'Failed to delete task' }, { status: 500 });
+    console.error('Unexpected error creating task:', error);
+    return NextResponse.json({ 
+      error: 'Failed to create task', 
+      details: error instanceof Error ? error.message : String(error)
+    }, { status: 500 });
   }
 }
