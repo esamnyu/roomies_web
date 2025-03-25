@@ -5,6 +5,7 @@ import { useState, useEffect } from 'react';
 import TaskForm from '@/components/tasks/TaskForm';
 import TaskList from '@/components/tasks/TaskList'; // Fixed casing to match your actual file
 import type { Task } from '@/components/tasks/TaskList'; // Import the Task type from your actual file
+import { supabaseClient } from '@/lib/supabase';
 
 // Mock data for development
 const MOCK_TASKS: Task[] = [
@@ -112,9 +113,39 @@ export default function TasksPage() {
   const [showTaskForm, setShowTaskForm] = useState(false);
   const [currentTask, setCurrentTask] = useState<Task | null>(null);
   const [filter, setFilter] = useState<'ALL' | 'MY_TASKS' | 'MY_CREATED' | 'PENDING' | 'COMPLETED'>('ALL');
+  const [householdId, setHouseholdId] = useState('');
   
   // For demo purposes, assuming current user is user1
   const currentUserId = '1';
+  
+  // Fetch the user's current household ID
+  useEffect(() => {
+    const fetchUserHousehold = async () => {
+      try {
+        const { data: { session } } = await supabaseClient.auth.getSession();
+        if (session) {
+          const { data: householdUser, error } = await supabaseClient
+            .from('HouseholdUser')
+            .select('householdId')
+            .eq('userId', session.user.id)
+            .order('joinedAt', { ascending: false })
+            .limit(1)
+            .single();
+          
+          if (!error && householdUser) {
+            console.log('Found household ID:', householdUser.householdId);
+            setHouseholdId(householdUser.householdId);
+          } else {
+            console.error('Error fetching household:', error);
+          }
+        }
+      } catch (err) {
+        console.error('Error in fetchUserHousehold:', err);
+      }
+    };
+    
+    fetchUserHousehold();
+  }, []);
   
   // Filtered tasks based on selected filter
   const filteredTasks = tasks.filter(task => {
@@ -350,11 +381,13 @@ const handleUpdateTask = (updatedTask: Task | NewTask) => {
               <TaskForm
                 task={currentTask}
                 members={MOCK_MEMBERS}
+                householdId={householdId}
                 onSubmit={currentTask ? handleUpdateTask : handleAddTask}
                 onCancel={() => {
                   setShowTaskForm(false);
                   setCurrentTask(null);
-                } } householdId={''}              />
+                }}
+              />
             </div>
           </div>
         </div>
