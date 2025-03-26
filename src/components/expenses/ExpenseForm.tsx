@@ -2,8 +2,10 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { supabaseClient } from '@/lib/supabase';
+// Removed: import { supabaseClient } from '@/lib/supabase'; // No longer needed as submit logic is handled by parent
 import { useSession } from 'next-auth/react';
+
+// Aligned interface definitions with the page component
 interface Member {
   id: string;
   name: string;
@@ -11,17 +13,21 @@ interface Member {
 }
 
 interface Split {
+  id?: string; // Add optional id for backend reference
   userId: string;
   userName: string;
   amount: number;
   percentage?: number;
+  expenseId?: string; // Add optional reference to parent expense
 }
 
 interface Payment {
+  id?: string; // Make id optional to support new payments
   userId: string;
   userName: string;
   amount: number;
   status: 'PENDING' | 'COMPLETED' | 'DECLINED';
+  expenseId?: string; // Add optional reference to parent expense
 }
 
 interface Expense {
@@ -39,27 +45,27 @@ interface Expense {
 }
 
 interface ExpenseFormProps {
-  expense?: Expense | null;
+  expense: Expense | null; // Changed to non-optional (but still nullable) to match usage/suggestion
   members: Member[];
-  householdId: string; // Add householdId prop
-  onSubmit: (expense: Expense) => void;
+  householdId: string;
+  onSubmit: (expense: Expense) => void | Promise<void>; // Allow async function
   onCancel: () => void;
 }
 
-export default function ExpenseForm({ 
-  expense, 
-  members, 
-  householdId, 
-  onSubmit, 
-  onCancel 
+export default function ExpenseForm({
+  expense,
+  members,
+  householdId,
+  onSubmit,
+  onCancel
 }: ExpenseFormProps) {
   const { data: session } = useSession();
-  const currentUserId = session?.user?.id || '';
+  const currentUserId = session?.user?.id || ''; // Default value provided
   const currentUser = members.find(m => m.id === currentUserId);
-  
+
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  
+
   // Default state for a new expense
   const getDefaultState = () => ({
     title: '',
@@ -69,7 +75,7 @@ export default function ExpenseForm({
     splitType: 'EQUAL' as const,
     creatorId: currentUserId,
     creatorName: currentUser?.name || '',
-    householdId, // Use prop instead of hardcoded value
+    householdId,
     splits: [],
     payments: []
   });
@@ -82,19 +88,19 @@ export default function ExpenseForm({
   // Initialize form data when expense prop changes or user session loads
   useEffect(() => {
     if (!currentUserId) return; // Wait for user session
-    
+
     if (expense) {
       const tempSplitPercentages: Record<string, number> = {};
       const tempSplitAmounts: Record<string, number> = {};
-      
+
       expense.splits.forEach(split => {
         tempSplitPercentages[split.userId] = split.percentage || 0;
         tempSplitAmounts[split.userId] = split.amount;
       });
-      
+
       setSplitPercentages(tempSplitPercentages);
       setSplitAmounts(tempSplitAmounts);
-      
+
       setFormData({
         ...expense,
         date: expense.date.toISOString().split('T')[0] // Convert Date to YYYY-MM-DD
@@ -104,15 +110,15 @@ export default function ExpenseForm({
       const membersCount = members.length;
       const tempSplitPercentages: Record<string, number> = {};
       const tempSplitAmounts: Record<string, number> = {};
-      
+
       members.forEach(member => {
         tempSplitPercentages[member.id] = 100 / membersCount;
         tempSplitAmounts[member.id] = 0; // Will be calculated when amount is set
       });
-      
+
       setSplitPercentages(tempSplitPercentages);
       setSplitAmounts(tempSplitAmounts);
-      
+
       setFormData({
         ...getDefaultState(),
         creatorId: currentUserId,
@@ -131,12 +137,12 @@ export default function ExpenseForm({
   const calculateSplits = () => {
     const amount = formData.amount;
     const tempSplitAmounts: Record<string, number> = {};
-    
+
     if (formData.splitType === 'EQUAL') {
       // Equal split
       const memberCount = members.length;
       const equalAmount = amount / memberCount;
-      
+
       members.forEach((member, index) => {
         // Handle rounding issues by adjusting the last member's amount
         if (index === memberCount - 1) {
@@ -154,20 +160,20 @@ export default function ExpenseForm({
       });
     }
     // For CUSTOM, we don't calculate automatically - user sets amounts directly
-    
+
     setSplitAmounts(tempSplitAmounts);
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
-    
+
     if (name === 'amount') {
       const numValue = parseFloat(value);
       setFormData({ ...formData, [name]: numValue || 0 });
     } else {
       setFormData({ ...formData, [name]: value });
     }
-    
+
     // Clear error when field is edited
     if (formErrors[name]) {
       setFormErrors({ ...formErrors, [name]: '' });
@@ -177,7 +183,7 @@ export default function ExpenseForm({
   const handlePercentageChange = (userId: string, value: number) => {
     const newPercentages = { ...splitPercentages, [userId]: value };
     setSplitPercentages(newPercentages);
-    
+
     // Recalculate amounts based on new percentages
     if (formData.amount > 0) {
       const newSplitAmounts = { ...splitAmounts };
@@ -189,7 +195,7 @@ export default function ExpenseForm({
   const handleAmountChange = (userId: string, value: number) => {
     const newSplitAmounts = { ...splitAmounts, [userId]: value };
     setSplitAmounts(newSplitAmounts);
-    
+
     // Update percentages if amount is greater than 0
     if (formData.amount > 0) {
       const newPercentages = { ...splitPercentages };
@@ -200,15 +206,15 @@ export default function ExpenseForm({
 
   const validateForm = () => {
     const newErrors: Record<string, string> = {};
-    
+
     if (!formData.title.trim()) {
       newErrors.title = 'Title is required';
     }
-    
+
     if (formData.amount <= 0) {
       newErrors.amount = 'Amount must be greater than 0';
     }
-    
+
     if (formData.splitType === 'PERCENTAGE') {
       const totalPercentage = Object.values(splitPercentages).reduce((a, b) => a + b, 0);
       if (Math.abs(totalPercentage - 100) > 0.1) { // Allow small rounding errors
@@ -220,89 +226,68 @@ export default function ExpenseForm({
         newErrors.splitType = 'Split amounts must add up to the total amount';
       }
     }
-    
+
     setFormErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!validateForm()) {
       return;
     }
-    
+
     setIsSubmitting(true);
     setError(null);
-    
+
     try {
-      // Create splits array
+      // Create splits array (Aligned with suggested logic)
       const splits = members.map(member => ({
+        id: expense?.splits.find(s => s.userId === member.id)?.id, // Preserve existing split IDs if editing
         userId: member.id,
         userName: member.name,
         amount: splitAmounts[member.id] || 0,
-        percentage: splitPercentages[member.id] || 0
+        percentage: splitPercentages[member.id] || 0,
+        expenseId: expense?.id // Add reference to parent expense if editing
       }));
-      
-      // Create payments array - the creator is paid, everyone else pays
+
+      // Create payments array - the creator is paid, everyone else pays (Aligned with suggested logic)
       const payments = members
         .filter(member => member.id !== formData.creatorId) // Exclude creator
-        .map(member => ({
-          userId: member.id,
-          userName: member.name,
-          amount: splitAmounts[member.id] || 0,
-          status: expense?.payments?.find(p => p.userId === member.id)?.status || 'PENDING' as const
-        }));
-      
+        .map(member => {
+          const existingPayment = expense?.payments.find(p => p.userId === member.id);
+          return {
+            id: existingPayment?.id, // Preserve existing payment IDs if editing
+            userId: member.id,
+            userName: member.name,
+            amount: splitAmounts[member.id] || 0,
+            status: existingPayment?.status || 'PENDING' as const, // Preserve status or default to PENDING
+            expenseId: expense?.id // Add reference to parent expense if editing
+          };
+        });
+
       // Prepare the expense data
       const expenseData = {
         ...formData,
+        id: expense?.id, // Include expense id if updating
         date: new Date(formData.date), // Convert string back to Date
         splits,
         payments
       };
-      
-      // If editing an existing expense
-      if (expense?.id) {
-        const response = await fetch(`/api/expenses/${expense.id}`, {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(expenseData),
-        });
-        
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.message || 'Failed to update expense');
-        }
-      } 
-      // If creating a new expense
-      else {
-        const response = await fetch('/api/expenses', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(expenseData),
-        });
-        
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.message || 'Failed to create expense');
-        }
-      }
-      
-      // Call the onSubmit callback with the expense data
-      onSubmit(expenseData);
+
+      // Call the onSubmit callback with the expense data (Replaced fetch logic)
+      await onSubmit(expenseData); // Use await since onSubmit can be async
+
     } catch (err) {
-      console.error('Error saving expense:', err);
+      console.error('Error saving expense via onSubmit:', err);
       setError(err instanceof Error ? err.message : 'An error occurred while saving the expense');
     } finally {
       setIsSubmitting(false);
     }
   };
 
+  // JSX part of the component remains the same
   return (
     <form onSubmit={handleSubmit} className="mt-5 space-y-4">
       {error && (
@@ -310,10 +295,10 @@ export default function ExpenseForm({
           {error}
         </div>
       )}
-      
+
       <div>
-        <label 
-          htmlFor="title" 
+        <label
+          htmlFor="title"
           className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
         >
           Title
@@ -330,10 +315,10 @@ export default function ExpenseForm({
         />
         {formErrors.title && <p className="mt-1 text-sm text-red-600 dark:text-red-400">{formErrors.title}</p>}
       </div>
-      
+
       <div>
-        <label 
-          htmlFor="amount" 
+        <label
+          htmlFor="amount"
           className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
         >
           Amount ($)
@@ -352,10 +337,10 @@ export default function ExpenseForm({
         />
         {formErrors.amount && <p className="mt-1 text-sm text-red-600 dark:text-red-400">{formErrors.amount}</p>}
       </div>
-      
+
       <div>
-        <label 
-          htmlFor="date" 
+        <label
+          htmlFor="date"
           className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
         >
           Date
@@ -370,10 +355,10 @@ export default function ExpenseForm({
           className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
         />
       </div>
-      
+
       <div>
-        <label 
-          htmlFor="description" 
+        <label
+          htmlFor="description"
           className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
         >
           Description (Optional)
@@ -388,10 +373,10 @@ export default function ExpenseForm({
           className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
         />
       </div>
-      
+
       <div>
-        <label 
-          htmlFor="splitType" 
+        <label
+          htmlFor="splitType"
           className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
         >
           How do you want to split this expense?
@@ -409,39 +394,46 @@ export default function ExpenseForm({
         </select>
         {formErrors.splitType && <p className="mt-1 text-sm text-red-600 dark:text-red-400">{formErrors.splitType}</p>}
       </div>
-      
+
       {/* Split details */}
       <div className="mt-4">
         <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Split Details</h4>
-        
+
         <div className="bg-gray-50 dark:bg-gray-700 p-4 rounded-md">
           <div className="grid grid-cols-3 gap-2 mb-2 font-medium text-sm text-gray-700 dark:text-gray-300">
             <div>Member</div>
-            {formData.splitType === 'PERCENTAGE' && <div>Percentage</div>}
-            <div>{formData.splitType === 'EQUAL' ? 'Amount (auto-calculated)' : 'Amount'}</div>
+            {/* Conditionally render Percentage column header */}
+            <div className={formData.splitType === 'PERCENTAGE' ? '' : 'col-start-3'}>
+                {formData.splitType === 'PERCENTAGE' ? 'Percentage' : ''}
+            </div>
+            <div className={formData.splitType === 'PERCENTAGE' ? '' : 'col-start-3'}>
+                {formData.splitType === 'EQUAL' ? 'Amount (auto-calculated)' : 'Amount'}
+            </div>
+
           </div>
-          
+
           {members.map(member => (
             <div key={member.id} className="grid grid-cols-3 gap-2 mb-3 items-center">
               <div className="text-sm text-gray-800 dark:text-gray-200">
                 {member.name} {member.id === formData.creatorId && '(Paid)'}
               </div>
-              
-              {formData.splitType === 'PERCENTAGE' && (
-                <div>
-                  <input
-                    type="number"
-                    min="0"
-                    max="100"
-                    step="0.01"
-                    value={splitPercentages[member.id] || 0}
-                    onChange={(e) => handlePercentageChange(member.id, parseFloat(e.target.value) || 0)}
-                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-600 dark:border-gray-500 dark:text-white"
-                  />
-                </div>
-              )}
-              
-              <div>
+
+              {/* Conditionally render Percentage input */}
+                {formData.splitType === 'PERCENTAGE' && (
+                    <div>
+                        <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            step="0.01"
+                            value={splitPercentages[member.id] || 0}
+                            onChange={(e) => handlePercentageChange(member.id, parseFloat(e.target.value) || 0)}
+                            className="w-full px-2 py-1 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-600 dark:border-gray-500 dark:text-white"
+                        />
+                    </div>
+                )}
+
+              <div className={formData.splitType !== 'PERCENTAGE' ? 'col-start-3' : ''}>
                 <div className="relative">
                   <span className="absolute inset-y-0 left-0 pl-2 flex items-center text-gray-500 dark:text-gray-400">$</span>
                   <input
@@ -452,23 +444,29 @@ export default function ExpenseForm({
                     onChange={(e) => handleAmountChange(member.id, parseFloat(e.target.value) || 0)}
                     disabled={formData.splitType === 'EQUAL'}
                     className={`w-full px-2 py-1 pl-6 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-600 dark:border-gray-500 dark:text-white ${
-                      formData.splitType === 'EQUAL' ? 'bg-gray-100 dark:bg-gray-700' : ''
+                      formData.splitType === 'EQUAL' ? 'bg-gray-100 dark:bg-gray-700 cursor-not-allowed' : ''
                     }`}
                   />
                 </div>
               </div>
             </div>
           ))}
-          
+
           <div className="flex justify-between text-sm font-medium pt-2 border-t border-gray-200 dark:border-gray-600 mt-2">
             <span className="text-gray-700 dark:text-gray-300">Total:</span>
-            <span className="text-gray-900 dark:text-white">
+            <span className={`text-gray-900 dark:text-white ${
+                (formData.splitType === 'CUSTOM' && Math.abs(Object.values(splitAmounts).reduce((sum, amount) => sum + amount, 0) - formData.amount) > 0.01) ||
+                (formData.splitType === 'PERCENTAGE' && Math.abs(Object.values(splitPercentages).reduce((sum, perc) => sum + perc, 0) - 100) > 0.1)
+                 ? 'text-red-600 dark:text-red-400' : ''
+            }`}>
               ${Object.values(splitAmounts).reduce((sum, amount) => sum + amount, 0).toFixed(2)}
+              {formData.splitType === 'PERCENTAGE' &&
+                ` (${Object.values(splitPercentages).reduce((sum, perc) => sum + perc, 0).toFixed(2)}%)`}
             </span>
           </div>
         </div>
       </div>
-      
+
       <div className="flex justify-end mt-6 gap-3">
         <button
           type="button"
