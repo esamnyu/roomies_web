@@ -2,8 +2,18 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import ExpenseForm from '@/components/expenses/ExpenseForm'; // Assuming this component exists
-import PaymentMatrix from '@/components/expenses/PaymentMatrix'; // Assuming this component exists
+import { useParams } from 'next/navigation';
+import { useSession } from 'next-auth/react';
+import ExpenseForm from '@/components/expenses/ExpenseForm'; 
+import PaymentMatrix from '@/components/expenses/PaymentMatrix'; 
+import { 
+  fetchExpenses, 
+  fetchHouseholdMembers, 
+  createExpense, 
+  updateExpense, 
+  deleteExpense, 
+  updatePaymentStatus 
+} from '@/lib/services/expenseService';
 
 // Define types matching the props expected by ExpenseForm
 interface Member {
@@ -13,21 +23,24 @@ interface Member {
 }
 
 interface Payment {
+  id: string; // Add id for backend reference
   userId: string;
   userName: string;
   amount: number;
   status: 'PENDING' | 'COMPLETED' | 'DECLINED';
+  expenseId: string; // Add reference to parent expense
 }
 
 interface Split {
+  id?: string; // Add optional id for backend reference
   userId: string;
   userName: string;
   amount: number;
+  expenseId?: string; // Add optional reference to parent expense
 }
 
-// --- FIX 1: Make id potentially undefined to match ExpenseForm expectations ---
 interface Expense {
-  id?: string; // Changed to optional to match ExpenseForm.tsx type
+  id?: string;
   title: string;
   amount: number;
   date: Date;
@@ -49,261 +62,296 @@ interface Balance {
   net: number;
 }
 
-
-// Mock data using the updated Expense type
-// Ensure creatorName is always provided
-const MOCK_EXPENSES: Expense[] = [
-  {
-    id: '1',
-    title: 'Groceries',
-    amount: 85.75,
-    date: new Date('2024-02-20T00:00:00.000Z'),
-    creatorId: '1',
-    creatorName: 'Jane Smith',
-    description: 'Weekly groceries from Trader Joe\'s',
-    splitType: 'EQUAL',
-    householdId: '1',
-    splits: [
-      { userId: '1', userName: 'Jane Smith', amount: 21.44 },
-      { userId: '2', userName: 'John Doe', amount: 21.44 },
-      { userId: '3', userName: 'Emily Johnson', amount: 21.44 },
-      { userId: '4', userName: 'Michael Brown', amount: 21.43 },
-    ],
-    payments: [
-      { userId: '2', userName: 'John Doe', amount: 21.44, status: 'COMPLETED' },
-      { userId: '3', userName: 'Emily Johnson', amount: 21.44, status: 'PENDING' },
-      { userId: '4', userName: 'Michael Brown', amount: 21.43, status: 'PENDING' },
-    ]
-  },
-  {
-    id: '2',
-    title: 'Internet Bill',
-    amount: 89.99,
-    date: new Date('2024-02-15T00:00:00.000Z'),
-    creatorId: '3',
-    creatorName: 'Emily Johnson',
-    description: 'Monthly internet bill from Comcast',
-    splitType: 'EQUAL',
-    householdId: '1',
-    splits: [ /* ... splits ... */ ],
-    payments: [ /* ... payments ... */ ]
-  },
-  {
-    id: '3',
-    title: 'Pizza Night',
-    amount: 45.50,
-    date: new Date('2024-02-10T00:00:00.000Z'),
-    creatorId: '2',
-    creatorName: 'John Doe',
-    description: 'Pizza and wings for movie night',
-    splitType: 'EQUAL',
-    householdId: '1',
-    splits: [ /* ... splits ... */ ],
-    payments: [ /* ... payments ... */ ]
-  },
-];
-
-const MOCK_MEMBERS: Member[] = [
-  { id: '1', name: 'Jane Smith', avatar: 'https://i.pravatar.cc/150?img=1' },
-  { id: '2', name: 'John Doe', avatar: 'https://i.pravatar.cc/150?img=8' },
-  { id: '3', name: 'Emily Johnson', avatar: 'https://i.pravatar.cc/150?img=5' },
-  { id: '4', name: 'Michael Brown', avatar: 'https://i.pravatar.cc/150?img=12' },
-];
-
 export default function ExpensesPage() {
-  const [expenses, setExpenses] = useState<Expense[]>(MOCK_EXPENSES);
+  const params = useParams();
+  const { data: session } = useSession();
+  const currentUserId = session?.user?.id;
+  
+  // Get householdId from route or user's default household
+  const householdId = params?.householdId as string || '1'; // Fallback to '1' if not in route
+  
+  const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [members, setMembers] = useState<Member[]>([]);
   const [showExpenseForm, setShowExpenseForm] = useState(false);
   const [currentExpense, setCurrentExpense] = useState<Expense | null>(null);
   const [balances, setBalances] = useState<Balance[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
+  // Fetch data when component mounts or householdId changes
+  useEffect(() => {
+    const loadData = async () => {
+      setIsLoading(true);
+      setError(null);
+      
+      try {
+        // Fetch expenses and members in parallel
+        const [expensesData, membersData] = await Promise.all([
+          fetchExpenses(householdId),
+          fetchHouseholdMembers(householdId)
+        ]);
+        
+        // Convert dates from strings to Date objects
+        const formattedExpenses = expensesData.map((expense: any) => ({
+          ...expense,
+          date: new Date(expense.date)
+        }));
+        
+        setExpenses(formattedExpenses);
+        setMembers(membersData);
+      } catch (err) {
+        console.error('Error loading data:', err);
+        setError('Failed to load data. Please try again.');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    
+    if (householdId) {
+      loadData();
+    }
+  }, [householdId]);
+
+  // Calculate balances whenever expenses change
   useEffect(() => {
     calculateBalances();
-  }, [expenses]);
+  }, [expenses, members]);
 
   const calculateBalances = () => {
-    // ... balance calculation ...
+    if (!members.length) return;
+    
     const finalBalances: Record<string, Balance> = {};
-     MOCK_MEMBERS.forEach(member => {
-      finalBalances[member.id] = { userId: member.id, userName: member.name, owes: 0, isOwed: 0, net: 0 };
+    
+    members.forEach(member => {
+      finalBalances[member.id] = { 
+        userId: member.id, 
+        userName: member.name, 
+        owes: 0, 
+        isOwed: 0, 
+        net: 0 
+      };
     });
+    
     expenses.forEach(expense => {
+      if (finalBalances[expense.creatorId]) {
         finalBalances[expense.creatorId].net += expense.amount;
-        expense.splits.forEach(split => {
-             finalBalances[split.userId].net -= split.amount;
-        });
+      }
+      
+      expense.splits.forEach(split => {
+        if (finalBalances[split.userId]) {
+          finalBalances[split.userId].net -= split.amount;
+        }
+      });
     });
+    
     Object.keys(finalBalances).forEach(userId => {
-         finalBalances[userId].net = parseFloat(finalBalances[userId].net.toFixed(2));
-         if (finalBalances[userId].net < 0) {
-              finalBalances[userId].owes = Math.abs(finalBalances[userId].net);
-              finalBalances[userId].isOwed = 0;
-         } else {
-              finalBalances[userId].isOwed = finalBalances[userId].net;
-              finalBalances[userId].owes = 0;
-         }
+      finalBalances[userId].net = parseFloat(finalBalances[userId].net.toFixed(2));
+      if (finalBalances[userId].net < 0) {
+        finalBalances[userId].owes = Math.abs(finalBalances[userId].net);
+        finalBalances[userId].isOwed = 0;
+      } else {
+        finalBalances[userId].isOwed = finalBalances[userId].net;
+        finalBalances[userId].owes = 0;
+      }
     });
+    
     setBalances(Object.values(finalBalances));
   };
 
-  // Combined handler for form submission - Fixed to handle potentially undefined id
-  const handleFormSubmit = (submittedExpenseData: Expense) => {
-     console.log("Form submitted:", submittedExpenseData);
-
-     // Find creator name if not provided by form
-     const creatorName = submittedExpenseData.creatorName || 
-                          MOCK_MEMBERS.find(m => m.id === submittedExpenseData.creatorId)?.name || 
+  // Handle form submission - now with API integration
+  const handleFormSubmit = async (submittedExpenseData: Expense) => {
+    try {
+      // Find creator name if not provided by form
+      const creatorName = submittedExpenseData.creatorName || 
+                          members.find(m => m.id === submittedExpenseData.creatorId)?.name || 
                           "Unknown";
 
-     if (currentExpense && submittedExpenseData.id) {
-       // --- Update Logic ---
-        const updatedExpense = {
-         ...expenses.find(e => e.id === submittedExpenseData.id), // Get existing base
-         ...submittedExpenseData, // Apply updates from form
-         creatorName: creatorName, // Ensure creatorName is set
-         date: new Date(submittedExpenseData.date) // Ensure date is Date object
-       } as Expense;
+      // Prepare data with proper format for API
+      const expenseData = {
+        ...submittedExpenseData,
+        creatorName,
+        // Ensure date is sent in ISO format
+        date: new Date(submittedExpenseData.date).toISOString(),
+      };
 
-       setExpenses(expenses.map(expense =>
-         expense.id === updatedExpense.id ? updatedExpense : expense
-       ));
-       console.log("Updating expense:", updatedExpense.id);
+      if (currentExpense && submittedExpenseData.id) {
+        // Update existing expense
+        const updatedExpense = await updateExpense(submittedExpenseData.id, expenseData);
+        
+        // Update local state
+        setExpenses(expenses.map(expense =>
+          expense.id === updatedExpense.id ? {
+            ...updatedExpense,
+            date: new Date(updatedExpense.date)
+          } : expense
+        ));
+        
+        console.log("Updated expense:", updatedExpense.id);
+      } else {
+        // Create new expense
+        const newExpense = await createExpense(expenseData);
+        
+        // Add to local state
+        setExpenses([...expenses, {
+          ...newExpense,
+          date: new Date(newExpense.date)
+        }]);
+        
+        console.log("Added expense:", newExpense.id);
+      }
 
-     } else {
-       // --- Add Logic ---
-       const newId = submittedExpenseData.id || `mock-${Date.now()}`;
-       const expenseToAdd: Expense = {
-         ...submittedExpenseData,
-         id: newId, // Set required ID
-         creatorName: creatorName, // Set required creatorName
-         date: new Date(submittedExpenseData.date),
-         // Handle potentially undefined or empty arrays
-         splits: submittedExpenseData.splits?.length > 0 ? submittedExpenseData.splits : 
-                MOCK_MEMBERS.map(m => ({ 
-                  userId: m.id, 
-                  userName: m.name, 
-                  amount: parseFloat((submittedExpenseData.amount / MOCK_MEMBERS.length).toFixed(2)) 
-                })),
-         payments: submittedExpenseData.payments?.length > 0 ? submittedExpenseData.payments : 
-                  MOCK_MEMBERS.filter(m => m.id !== submittedExpenseData.creatorId)
-                    .map(m => ({ 
-                      userId: m.id, 
-                      userName: m.name, 
-                      amount: parseFloat((submittedExpenseData.amount / MOCK_MEMBERS.length).toFixed(2)), 
-                      status: 'PENDING' as const 
-                    }))
-       };
-
-       setExpenses([...expenses, expenseToAdd]);
-       console.log("Adding expense:", expenseToAdd.id);
-     }
-
-     setShowExpenseForm(false);
-     setCurrentExpense(null);
-   };
+      setShowExpenseForm(false);
+      setCurrentExpense(null);
+    } catch (err) {
+      console.error('Error saving expense:', err);
+      // You could set an error state and show to user
+      alert('Failed to save expense. Please try again.');
+    }
+  };
 
   const handleEditExpense = (expense: Expense) => {
     setCurrentExpense(expense);
     setShowExpenseForm(true);
   };
 
-  const handleDeleteExpense = (expenseId: string) => {
-    setExpenses(expenses.filter(expense => expense.id !== expenseId));
-    console.log("Deleting expense:", expenseId);
+  const handleDeleteExpense = async (expenseId: string | undefined) => {
+    if (!expenseId) return;
+    
+    try {
+      await deleteExpense(expenseId);
+      
+      // Update local state
+      setExpenses(expenses.filter(expense => expense.id !== expenseId));
+      console.log("Deleted expense:", expenseId);
+    } catch (err) {
+      console.error('Error deleting expense:', err);
+      alert('Failed to delete expense. Please try again.');
+    }
   };
 
-  const handleMarkAsPaid = (expenseId: string, userId: string) => {
-    setExpenses(prevExpenses => prevExpenses.map(expense => {
-      if (expense.id === expenseId) {
-        return {
-          ...expense,
-          payments: expense.payments.map(payment =>
-            payment.userId === userId ? { ...payment, status: 'COMPLETED' as const } : payment
-          )
-        };
-      }
-      return expense;
-    }));
-     console.log(`Marking payment as paid for user ${userId} in expense ${expenseId}`);
+  const handleMarkAsPaid = async (expenseId: string | undefined, userId: string) => {
+    if (!expenseId) return;
+    
+    try {
+      // Find the payment that needs to be updated
+      const expense = expenses.find(e => e.id === expenseId);
+      if (!expense) return;
+      
+      const payment = expense.payments.find(p => p.userId === userId);
+      if (!payment || !payment.id) return;
+      
+      // Update the payment status through API
+      await updatePaymentStatus(payment.id, 'COMPLETED');
+      
+      // Update local state
+      setExpenses(prevExpenses => prevExpenses.map(expense => {
+        if (expense.id === expenseId) {
+          return {
+            ...expense,
+            payments: expense.payments.map(payment =>
+              payment.userId === userId ? { ...payment, status: 'COMPLETED' as const } : payment
+            )
+          };
+        }
+        return expense;
+      }));
+      
+      console.log(`Marked payment as paid for user ${userId} in expense ${expenseId}`);
+    } catch (err) {
+      console.error('Error updating payment status:', err);
+      alert('Failed to mark payment as paid. Please try again.');
+    }
   };
 
-  // Current user ID for display logic
-  const currentUserId = '1'; // TODO: Replace with actual current user ID
+  if (isLoading) return <div className="p-8 text-center">Loading expenses...</div>;
+  
+  if (error) return <div className="p-8 text-center text-red-500">{error}</div>;
 
   return (
     <div className="container mx-auto py-6 px-4">
       {/* Header */}
       <div className="flex justify-between items-center mb-6">
-         {/* ... title and button ... */}
          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Household Expenses</h1>
-         <button onClick={() => { setCurrentExpense(null); setShowExpenseForm(true); }} /* ... classes ... */>Add New Expense</button>
+         <button 
+           onClick={() => { setCurrentExpense(null); setShowExpenseForm(true); }}
+           className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-md"
+         >
+           Add New Expense
+         </button>
       </div>
 
       {/* Payment Summary */}
       <div className="mb-8">
-         {/* ... title and commented out matrix ... */}
          <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">Payment Summary</h2>
-         {/* <PaymentMatrix balances={balances} /> */}
-         <p className="text-sm text-gray-500 dark:text-gray-400">(Payment summary component temporarily disabled - requires prop definition)</p>
+         {balances.length > 0 ? (
+           <PaymentMatrix balances={balances} />
+         ) : (
+           <p className="text-sm text-gray-500 dark:text-gray-400">No balance data available yet.</p>
+         )}
       </div>
 
       {/* Expenses List */}
       <div>
-         {/* ... title and table ... */}
          <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">Recent Expenses</h2>
-         <div className="bg-white dark:bg-gray-800 shadow-md rounded-lg overflow-hidden">
-           <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-              {/* Table Head */}
-              <thead className="bg-gray-50 dark:bg-gray-700">
-                 {/* ... headers ... */}
-                 <tr>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Expense</th>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Date</th>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Amount</th>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Paid By</th>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Your Share</th>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Status</th>
-                    <th scope="col" className="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Actions</th>
-                 </tr>
-              </thead>
-              {/* Table Body */}
-              <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-                 {expenses.map((expense) => {
-                   const isCreator = expense.creatorId === currentUserId;
-                   const userSplit = expense.splits.find(split => split.userId === currentUserId);
-                   const userPaymentEntry = expense.payments.find(payment => payment.userId === currentUserId);
-                   const needsToPay = !isCreator && userPaymentEntry?.status === 'PENDING';
-                   const isSettled = isCreator || userPaymentEntry?.status === 'COMPLETED';
+         {expenses.length > 0 ? (
+           <div className="bg-white dark:bg-gray-800 shadow-md rounded-lg overflow-hidden">
+             <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                {/* Table Head */}
+                <thead className="bg-gray-50 dark:bg-gray-700">
+                   <tr>
+                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Expense</th>
+                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Date</th>
+                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Amount</th>
+                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Paid By</th>
+                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Your Share</th>
+                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Status</th>
+                      <th scope="col" className="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Actions</th>
+                   </tr>
+                </thead>
+                {/* Table Body */}
+                <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+                   {expenses.map((expense) => {
+                     const isCreator = expense.creatorId === currentUserId;
+                     const userSplit = expense.splits.find(split => split.userId === currentUserId);
+                     const userPaymentEntry = expense.payments.find(payment => payment.userId === currentUserId);
+                     const needsToPay = !isCreator && userPaymentEntry?.status === 'PENDING';
+                     const isSettled = isCreator || userPaymentEntry?.status === 'COMPLETED';
 
-                   return (
-                     <tr key={expense.id}>
-                       {/* Table Cells */}
-                       <td className="px-6 py-4 whitespace-nowrap">
-                         <div className="text-sm font-medium text-gray-900 dark:text-white">{expense.title}</div>
-                         {expense.description && <div className="text-sm text-gray-500 dark:text-gray-400">{expense.description}</div>}
-                       </td>
-                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">{expense.date.toLocaleDateString()}</td>
-                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">${expense.amount.toFixed(2)}</td>
-                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">{expense.creatorName}</td> {/* Uses required creatorName */}
-                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">${userSplit ? userSplit.amount.toFixed(2) : '0.00'}</td>
-                       <td className="px-6 py-4 whitespace-nowrap">{/* Status Badges */}
-                          {isCreator ? (<span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">You Paid</span>
-                          ) : isSettled ? (<span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">Settled</span>
-                          ) : needsToPay ? (<span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">You Owe</span>
-                          ) : (<span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200">-</span>)}
-                       </td>
-                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">{/* Action Buttons */}
-                          <div className="flex justify-end space-x-2">
-                            {needsToPay && (<button onClick={() => handleMarkAsPaid(expense.id, currentUserId)} className="text-green-600 hover:text-green-900 dark:text-green-400 dark:hover:text-green-300" title="Mark your share as paid">Mark Paid</button>)}
-                            <button onClick={() => handleEditExpense(expense)} className="text-blue-600 hover:text-blue-900 dark:text-blue-400 dark:hover:text-blue-300">Edit</button>
-                            <button onClick={() => handleDeleteExpense(expense.id)} className="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300">Delete</button>
-                          </div>
-                       </td>
-                     </tr>
-                   );
-                 })}
-              </tbody>
-           </table>
-         </div>
+                     return (
+                       <tr key={expense.id}>
+                         {/* Table Cells */}
+                         <td className="px-6 py-4 whitespace-nowrap">
+                           <div className="text-sm font-medium text-gray-900 dark:text-white">{expense.title}</div>
+                           {expense.description && <div className="text-sm text-gray-500 dark:text-gray-400">{expense.description}</div>}
+                         </td>
+                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">{expense.date.toLocaleDateString()}</td>
+                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">${expense.amount.toFixed(2)}</td>
+                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">{expense.creatorName}</td>
+                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">${userSplit ? userSplit.amount.toFixed(2) : '0.00'}</td>
+                         <td className="px-6 py-4 whitespace-nowrap">{/* Status Badges */}
+                            {isCreator ? (<span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">You Paid</span>
+                            ) : isSettled ? (<span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">Settled</span>
+                            ) : needsToPay ? (<span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">You Owe</span>
+                            ) : (<span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200">-</span>)}
+                         </td>
+                         <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">{/* Action Buttons */}
+                            <div className="flex justify-end space-x-2">
+                              {needsToPay && (<button onClick={() => handleMarkAsPaid(expense.id, currentUserId)} className="text-green-600 hover:text-green-900 dark:text-green-400 dark:hover:text-green-300" title="Mark your share as paid">Mark Paid</button>)}
+                              <button onClick={() => handleEditExpense(expense)} className="text-blue-600 hover:text-blue-900 dark:text-blue-400 dark:hover:text-blue-300">Edit</button>
+                              <button onClick={() => handleDeleteExpense(expense.id)} className="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300">Delete</button>
+                            </div>
+                         </td>
+                       </tr>
+                     );
+                   })}
+                </tbody>
+             </table>
+           </div>
+         ) : (
+           <div className="bg-white dark:bg-gray-800 shadow-md rounded-lg p-6 text-center">
+             <p className="text-gray-500 dark:text-gray-400">No expenses found. Add your first expense!</p>
+           </div>
+         )}
       </div>
 
       {/* Expense Form Modal */}
@@ -324,10 +372,10 @@ export default function ExpensesPage() {
                  {/* Expense Form */}
                  <ExpenseForm
                     expense={currentExpense} 
-                    members={MOCK_MEMBERS}
+                    members={members}
                     onSubmit={handleFormSubmit}
                     onCancel={() => { setShowExpenseForm(false); setCurrentExpense(null); }}
-                    householdId={'1'} // Pass mock household ID
+                    householdId={householdId}
                   />
               </div>
            </div>

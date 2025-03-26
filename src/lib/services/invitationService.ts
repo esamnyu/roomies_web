@@ -2,7 +2,6 @@
 import { randomBytes } from 'crypto';
 import { generateUUID } from '@/lib/utils';
 import { sendInvitationEmail } from '@/lib/email';
-import { PostgrestError } from '@supabase/supabase-js';
 
 // Generate a secure random token
 export function generateToken(length: number = 32): string {
@@ -281,6 +280,59 @@ export async function createInvitation(
     };
   }
 }
+
+/**
+ * Add a user to a household with a specific role
+ */
+export async function addUserToHousehold(
+    supabase: any,
+    userId: string,
+    householdId: string,
+    role: string
+  ) {
+    // Check if the user is already a member
+    const { data: existingMembership } = await supabase
+      .from('HouseholdUser')
+      .select('id, role')
+      .eq('userId', userId)
+      .eq('householdId', householdId)
+      .maybeSingle();
+    
+    if (existingMembership) {
+      return {
+        message: 'User is already a member of this household',
+        role: existingMembership.role,
+        householdId
+      };
+    }
+    
+    // Add the user to the household
+    const membershipId = generateUUID();
+    
+    const { error: addError } = await supabase
+      .from('HouseholdUser')
+      .insert([
+        {
+          id: membershipId,
+          userId,
+          householdId,
+          role,
+          joinedAt: new Date().toISOString()
+        }
+      ]);
+    
+    if (addError) {
+      throw new Error('Failed to add user to the household');
+    }
+    
+    return {
+      id: membershipId,
+      userId,
+      householdId,
+      role,
+      joinedAt: new Date().toISOString()
+    };
+  }
 
 /**
  * Update invitation status (accept/decline)

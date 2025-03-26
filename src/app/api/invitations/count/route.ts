@@ -4,7 +4,6 @@ import { withAuth } from '@/lib/auth';
 import { getSupabaseClient } from '@/lib/auth';
 import { handleApiError } from '@/lib/errorhandler';
 
-// GET /api/invitations/count - Get pending invitations count for current user
 export const GET = withAuth(async (request: NextRequest, user: any) => {
   try {
     const supabase = getSupabaseClient();

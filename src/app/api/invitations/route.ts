@@ -8,28 +8,26 @@ import {
   validateInvitationData,
   createInvitation,
   updateInvitationStatus,
-  acceptInvitationByToken
+  acceptInvitationByToken,
+  addUserToHousehold // New function we just created
 } from '@/lib/services/invitationService';
 import { handleApiError } from '@/lib/errorhandler';
-
 // GET /api/invitations - Get all invitations for the current user or for a household
 export const GET = withAuth(async (request: NextRequest, user: any) => {
   try {
     const supabase = getSupabaseClient();
-    
-    // Get query parameters
     const { searchParams } = new URL(request.url);
     const householdId = searchParams.get('householdId');
-    const status = searchParams.get('status') || 'PENDING'; // Default to pending invitations
+    const status = searchParams.get('status') || 'PENDING';
     const tokenParam = searchParams.get('token');
     
-    // If token is provided, get invitation by token
+    // Token-based lookup
     if (tokenParam) {
       try {
         const invitation = await getInvitationByToken(supabase, tokenParam);
         await checkInvitationExpiration(supabase, invitation);
         
-        // Return the invitation details (without sensitive info like the token)
+        // Return sanitized invitation details
         return NextResponse.json({
           id: invitation.id,
           email: invitation.email,
@@ -47,7 +45,7 @@ export const GET = withAuth(async (request: NextRequest, user: any) => {
       }
     }
     
-    // Build base query
+    // Build the base query
     let query = supabase
       .from('Invitation')
       .select(`
@@ -107,7 +105,7 @@ export const POST = withAuth(async (request: NextRequest, user: any) => {
   try {
     const supabase = getSupabaseClient();
     
-    // Get the invitation data from the request
+    // Get the invitation data
     const invitationData = await request.json();
     
     // Validate the data
@@ -182,12 +180,16 @@ export const PATCH = withAuth(async (request: NextRequest, user: any) => {
     
     // If accepted, add the user to the household
     if (status === 'ACCEPTED') {
-      // This logic is quite complex, so we'll keep it in the route handler for now
-      // First get or create the user record in the database
+      // Get user's database record
       const userData = await getUserDbRecord(user.email);
       
-      // Add the user to the household and return response
-      // This part could also be moved to the service in a more complete refactoring
+      // Add the user to the household
+      await addUserToHousehold(
+        supabase,
+        userData.id,
+        updatedInvitation.householdId,
+        updatedInvitation.role
+      );
       
       return NextResponse.json({
         message: `Invitation accepted successfully`,
@@ -236,29 +238,6 @@ export const PUT = withAuth(async (request: NextRequest, user: any) => {
     );
     
     return NextResponse.json(result);
-  } catch (error) {
-    return handleApiError(error);
-  }
-});
-
-// GET /api/invitations/count - Get pending invitations count
-// This should be moved to a separate route file
-export const GET_COUNT = withAuth(async (request: NextRequest, user: any) => {
-  try {
-    const supabase = getSupabaseClient();
-    
-    // Get the count of pending invitations for the user
-    const { count, error } = await supabase
-      .from('Invitation')
-      .select('*', { count: 'exact', head: true })
-      .eq('email', user.email)
-      .eq('status', 'PENDING');
-    
-    if (error) {
-      return NextResponse.json({ error: 'Failed to fetch invitation count' }, { status: 500 });
-    }
-    
-    return NextResponse.json({ count: count || 0 });
   } catch (error) {
     return handleApiError(error);
   }
