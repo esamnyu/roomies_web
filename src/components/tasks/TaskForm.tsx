@@ -2,7 +2,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { supabaseClient } from '@/lib/supabase';
+import { createClient } from '@supabase/supabase-js';
 
 interface Member {
   id: string;
@@ -33,33 +33,53 @@ type NewTask = Omit<Task, 'id'> & { id?: string };
 interface TaskFormProps {
   task?: Task | null;
   members: Member[];
-  householdId: string; // Added householdId prop
+  householdId: string;
+  currentUserId?: string; // Accept currentUserId as prop instead of fetching
   onSubmit: (task: Task | NewTask) => void;
   onCancel: () => void;
 }
 
+// Initialize Supabase client (browser-side)
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+  {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+    }
+  }
+);
+
 export default function TaskForm({ 
   task, 
   members, 
-  householdId, 
+  householdId,
+  currentUserId: propUserId, // Renamed to avoid collision with state
   onSubmit, 
   onCancel 
 }: TaskFormProps) {
-  const [currentUserId, setCurrentUserId] = useState<string>('');
+  const [currentUserId, setCurrentUserId] = useState<string>(propUserId || '');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
-  // Get current user from Supabase
+  // Get current user from Supabase if not provided as prop
   useEffect(() => {
     const getCurrentUser = async () => {
-      const { data: { session } } = await supabaseClient.auth.getSession();
+      // If we already have the user ID from props, use that
+      if (propUserId) {
+        setCurrentUserId(propUserId);
+        return;
+      }
+      
+      const { data: { session } } = await supabase.auth.getSession();
       if (session?.user) {
         setCurrentUserId(session.user.id);
       }
     };
     
     getCurrentUser();
-  }, []);
+  }, [propUserId]);
   
   const currentUser = members.find(m => m.id === currentUserId);
   
@@ -74,7 +94,7 @@ export default function TaskForm({
     dueDate: '',
     recurring: false,
     recurrenceRule: 'WEEKLY',
-    householdId, // Use prop instead of hardcoded value
+    householdId,
   });
 
   const [formData, setFormData] = useState<Omit<Task, 'id' | 'dueDate'> & { id?: string, dueDate: string }>(getDefaultState());
@@ -170,8 +190,8 @@ export default function TaskForm({
       
       // If editing an existing task
       if (task?.id) {
-        const response = await fetch(`/api/tasks/${task.id}`, {
-          method: 'PUT',
+        const response = await fetch(`/api/tasks?id=${task.id}`, {
+          method: 'PATCH',
           headers: {
             'Content-Type': 'application/json',
           },

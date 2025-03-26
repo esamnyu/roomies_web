@@ -17,19 +17,25 @@ const publicPaths = [
   '/api/auth/forgot-password',
   '/api/auth/reset-password',
   '/api/invitations',  // Allow checking invitations without auth
+  // REMOVED: '/api/tasks', // Temporarily bypassing auth for tasks API
+  '/api/debug-cookies', // Add this for debugging cookie issues
 ];
 
 export async function middleware(request: NextRequest) {
   // Check if the path is public
   const { pathname } = request.nextUrl;
-  
+
+  // Add debugging for middleware processing
+  console.log(`Middleware processing: ${pathname}`);
+
   // Allow access to static files and public routes without authentication
   if (
-    pathname.startsWith('/_next') || 
-    pathname.startsWith('/static') || 
+    pathname.startsWith('/_next') ||
+    pathname.startsWith('/static') ||
     pathname.startsWith('/api/test') ||
     publicPaths.some(path => pathname === path || pathname.startsWith(path))
   ) {
+    console.log(`Public path access: ${pathname}`);
     return NextResponse.next();
   }
 
@@ -37,31 +43,88 @@ export async function middleware(request: NextRequest) {
   const res = NextResponse.next();
   const supabase = createMiddlewareClient({ req: request, res });
 
-  // Check if user is authenticated with Supabase
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
+  try {
+    // Check if user is authenticated with Supabase
+    const {
+      data: { session },
+      error: sessionError
+    } = await supabase.auth.getSession();
 
-  // Handle session refresh if needed
-  if (session?.expires_at && session.expires_at < Math.floor(Date.now() / 1000)) {
-    // Session is expired, try to refresh it
-    const { data: { session: refreshedSession } } = await supabase.auth.refreshSession();
-    if (!refreshedSession) {
-      // If refresh failed, redirect to login
+    // Log session information for debugging
+    if (session) {
+      console.log(`Active session found for user: ${session.user.id}`);
+    } else {
+      console.log(`No active session found for: ${pathname}`);
+      if (sessionError) {
+        console.error(`Session error: ${sessionError.message}`);
+      }
+    }
+
+    // Handle session refresh if needed
+    if (session?.expires_at && session.expires_at < Math.floor(Date.now() / 1000)) {
+      console.log('Session expired, attempting refresh');
+      const { data: { session: refreshedSession }, error: refreshError } = await supabase.auth.refreshSession();
+
+      if (refreshError) {
+        console.error(`Session refresh error: ${refreshError.message}`);
+      }
+
+      if (!refreshedSession) {
+        console.log('Session refresh failed, redirecting to login');
+
+        // For API routes, return JSON error instead of redirecting
+        if (pathname.startsWith('/api/')) {
+          return NextResponse.json({
+            error: 'Authentication required - session expired',
+            path: pathname
+          }, { status: 401 });
+        }
+
+        // For regular routes, redirect to login
+        const redirectUrl = new URL('/login', request.url);
+        redirectUrl.searchParams.set('callbackUrl', pathname);
+        return NextResponse.redirect(redirectUrl);
+      } else {
+        console.log('Session refresh successful');
+      }
+    }
+
+    // If there's no session and the path is not public, handle accordingly
+    if (!session && !publicPaths.some(path => pathname === path || pathname.startsWith(path))) {
+      console.log(`Authentication required for: ${pathname}`);
+
+      // Special handling for API routes
+      if (pathname.startsWith('/api/')) {
+        console.log(`API authentication failed: ${pathname}`);
+        return NextResponse.json({
+          error: 'Authentication required',
+          path: pathname,
+          message: 'You must be logged in to access this API endpoint'
+        }, { status: 401 });
+      }
+
+      // Redirect to login for regular routes
       const redirectUrl = new URL('/login', request.url);
       redirectUrl.searchParams.set('callbackUrl', pathname);
       return NextResponse.redirect(redirectUrl);
     }
-  }
 
-  // If there's no session and the path is not public, redirect to login
-  if (!session && !publicPaths.some(path => pathname.startsWith(path))) {
+    return res;
+  } catch (error) {
+    console.error(`Middleware error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+
+    // For API routes, return a JSON error
+    if (pathname.startsWith('/api/')) {
+      return NextResponse.json({
+        error: 'Authentication error',
+        message: 'An error occurred while checking authentication'
+      }, { status: 500 });
+    }
+
+    // For regular routes, redirect to login
     const redirectUrl = new URL('/login', request.url);
-    redirectUrl.searchParams.set('callbackUrl', pathname);
     return NextResponse.redirect(redirectUrl);
   }
-
-  return res;
 }
 
 // Configure the middleware to run on specific paths
