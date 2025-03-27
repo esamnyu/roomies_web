@@ -4,6 +4,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { useAuth } from '@/context/AuthContext';
 
 export default function LoginForm() {
   const [email, setEmail] = useState('');
@@ -11,6 +12,7 @@ export default function LoginForm() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const router = useRouter();
+  const { signIn } = useAuth();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -18,23 +20,25 @@ export default function LoginForm() {
     setError('');
 
     try {
-      const response = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email, password }),
-      });
+      // Use the Auth context's signIn method directly instead of making a fetch request
+      const { error: signInError } = await signIn(email, password);
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.message || 'Failed to login');
+      if (signInError) {
+        throw new Error(signInError.message || 'Failed to login');
       }
 
-      // Successfully logged in
+      console.log('Login successful - redirecting to dashboard');
+      
+      // Clear form
+      setEmail('');
+      setPassword('');
+      
+      // Successfully logged in - redirect to dashboard
+      router.refresh(); // Refresh to ensure proper state updates
       router.push('/dashboard');
+      
     } catch (err) {
+      console.error('Login error:', err);
       setError(err instanceof Error ? err.message : 'An error occurred during login');
     } finally {
       setLoading(false);

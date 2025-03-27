@@ -26,18 +26,39 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     // Get initial session
     const getInitialSession = async () => {
-      const { data: { session }, error } = await supabaseClient.auth.getSession();
-      
-      setSession(session);
-      setUser(session?.user ?? null);
-      setIsLoading(false);
+      try {
+        console.log('Getting initial session...');
+        const { data: { session }, error } = await supabaseClient.auth.getSession();
+        
+        if (error) {
+          console.error('Error getting session:', error);
+        }
+        
+        if (session) {
+          console.log('Session found, user ID:', session.user.id);
+        } else {
+          console.log('No session found');
+        }
+        
+        setSession(session);
+        setUser(session?.user ?? null);
+      } catch (err) {
+        console.error('Unexpected error getting session:', err);
+      } finally {
+        setIsLoading(false);
+      }
     };
 
     getInitialSession();
 
     // Listen for auth changes
     const { data: { subscription } } = supabaseClient.auth.onAuthStateChange(
-      (_event, session) => {
+      (event, session) => {
+        console.log('Auth state changed:', event);
+        if (session) {
+          console.log('New session, user ID:', session.user.id);
+        }
+        
         setSession(session);
         setUser(session?.user ?? null);
         setIsLoading(false);
@@ -50,47 +71,88 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const signIn = async (email: string, password: string) => {
-    const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
-    return { error };
+    console.log('Signing in with email:', email);
+    try {
+      const { data, error } = await supabaseClient.auth.signInWithPassword({ 
+        email, 
+        password 
+      });
+      
+      if (error) {
+        console.error('Sign in error:', error);
+      } else {
+        console.log('Sign in successful, session created:', !!data.session);
+        // Make sure we update our local state with the new session
+        setSession(data.session);
+        setUser(data.user);
+      }
+      
+      return { error };
+    } catch (err) {
+      console.error('Unexpected error during sign in:', err);
+      return { error: err };
+    }
   };
 
   const signUp = async (email: string, password: string, name: string) => {
-    const { data, error } = await supabaseClient.auth.signUp({ 
-      email, 
-      password,
-      options: {
-        data: {
-          name
+    try {
+      console.log('Signing up with email:', email);
+      const { data, error } = await supabaseClient.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            name
+          },
+          // Ensure cookies are persisted
+          emailRedirectTo: `${window.location.origin}/auth/callback`,
+        }
+      });
+
+      // If successful, create a user record in your database
+      if (data.user && !error) {
+        console.log('Sign up successful, creating user record...');
+        try {
+          const response = await fetch('/api/users', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            credentials: 'include', // Include cookies in the request
+            body: JSON.stringify({
+              id: data.user.id,
+              email,
+              name,
+            }),
+          });
+          
+          if (!response.ok) {
+            console.error('Failed to create user record:', await response.text());
+          }
+        } catch (err) {
+          console.error('Error creating user record:', err);
+          return { error: err, data: null };
         }
       }
-    });
 
-    // If successful, create a user record in your database
-    if (data.user && !error) {
-      try {
-        await fetch('/api/users', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ 
-            id: data.user.id,
-            email, 
-            name,
-            // Don't include password here - it's already handled by Supabase Auth
-          }),
-        });
-      } catch (err) {
-        return { error: err, data: null };
-      }
+      return { data, error };
+    } catch (err) {
+      console.error('Unexpected error during sign up:', err);
+      return { error: err, data: null };
     }
-
-    return { data, error };
   };
 
   const signOut = async () => {
-    await supabaseClient.auth.signOut();
-    router.push('/login');
+    console.log('Signing out...');
+    try {
+      await supabaseClient.auth.signOut();
+      console.log('Sign out successful');
+      setUser(null);
+      setSession(null);
+      router.push('/login');
+    } catch (err) {
+      console.error('Error signing out:', err);
+    }
   };
 
   const value = {

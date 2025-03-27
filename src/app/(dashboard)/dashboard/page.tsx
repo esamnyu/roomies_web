@@ -10,17 +10,6 @@ import Link from 'next/link';
 import InviteModal from '@/components/invitations/InviteModal';
 import { supabaseClient } from '@/lib/supabase';
 
-// Mock data for demonstration (keeping this for HouseholdInfo for now)
-const MOCK_HOUSEHOLD = {
-  name: '123 College Avenue',
-  address: '123 College Avenue, Berkeley, CA 94704',
-  moveInDate: 'August 15, 2023',
-  memberCount: 4,
-  pendingExpenses: 3,
-  upcomingTasks: 5,
-  unreadMessages: 2,
-};
-
 export default function DashboardPage() {
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
@@ -31,6 +20,15 @@ export default function DashboardPage() {
   const [members, setMembers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [household, setHousehold] = useState({
+    name: '',
+    address: '',
+    moveInDate: '',
+    memberCount: 0,
+    pendingExpenses: 0,
+    upcomingTasks: 0,
+    unreadMessages: 0
+  });
 
   // Fetch the user's primary household
   useEffect(() => {
@@ -51,6 +49,25 @@ export default function DashboardPage() {
           if (!error && householdUser) {
             console.log('Found household ID:', householdUser.householdId);
             setCurrentHouseholdId(householdUser.householdId);
+            
+            // Fetch household details
+            const { data: householdData } = await supabaseClient
+              .from('Household')
+              .select('*')
+              .eq('id', householdUser.householdId)
+              .single();
+              
+            if (householdData) {
+              setHousehold({
+                name: householdData.name || '',
+                address: householdData.address || '',
+                moveInDate: householdData.createdAt ? new Date(householdData.createdAt).toLocaleDateString() : '',
+                memberCount: 0,  // Will be updated when members are fetched
+                pendingExpenses: 0,
+                upcomingTasks: 0,
+                unreadMessages: 0
+              });
+            }
           }
         }
       } catch (error) {
@@ -73,8 +90,14 @@ export default function DashboardPage() {
         setLoading(true);
         console.log('Fetching members for household ID:', currentHouseholdId);
         
-        // Use the API endpoint to fetch members
-        const response = await fetch(`/api/households/${currentHouseholdId}/members`);
+        // Use the API endpoint to fetch members WITH credentials included
+        const response = await fetch(`/api/households/${currentHouseholdId}/members`, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          credentials: 'include' // Include cookies for authentication
+        });
         
         if (!response.ok) {
           throw new Error(`Failed to fetch members: ${response.status}`);
@@ -83,6 +106,13 @@ export default function DashboardPage() {
         const data = await response.json();
         console.log('Fetched members:', data);
         setMembers(data);
+        
+        // Update household member count
+        setHousehold(prev => ({
+          ...prev,
+          memberCount: data.length
+        }));
+        
         setError('');
       } catch (err) {
         console.error('Error fetching members:', err);
@@ -162,13 +192,15 @@ export default function DashboardPage() {
       <div className="flex flex-col lg:flex-row gap-6">
         <div className="w-full lg:w-2/3">
           <HouseholdInfo
-            name={MOCK_HOUSEHOLD.name}
-            address={MOCK_HOUSEHOLD.address}
-            moveInDate={MOCK_HOUSEHOLD.moveInDate}
-            memberCount={MOCK_HOUSEHOLD.memberCount}
-            pendingExpenses={MOCK_HOUSEHOLD.pendingExpenses}
-            upcomingTasks={MOCK_HOUSEHOLD.upcomingTasks}
-            unreadMessages={MOCK_HOUSEHOLD.unreadMessages} householdId={''}          />
+            name={household.name}
+            address={household.address}
+            moveInDate={household.moveInDate}
+            memberCount={household.memberCount}
+            pendingExpenses={household.pendingExpenses}
+            upcomingTasks={household.upcomingTasks}
+            unreadMessages={household.unreadMessages}
+            householdId={currentHouseholdId}
+          />
           
           {/* Quick Action Buttons */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
