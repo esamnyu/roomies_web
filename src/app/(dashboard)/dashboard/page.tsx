@@ -10,7 +10,7 @@ import Link from 'next/link';
 import InviteModal from '@/components/invitations/InviteModal';
 import { supabaseClient } from '@/lib/supabase';
 
-// Mock data for demonstration
+// Mock data for demonstration (keeping this for HouseholdInfo for now)
 const MOCK_HOUSEHOLD = {
   name: '123 College Avenue',
   address: '123 College Avenue, Berkeley, CA 94704',
@@ -21,57 +21,6 @@ const MOCK_HOUSEHOLD = {
   unreadMessages: 2,
 };
 
-const MOCK_MEMBERS = [
-  {
-    id: '1',
-    name: 'Jane Smith',
-    avatar: 'https://i.pravatar.cc/150?img=1',
-    role: 'ADMIN' as const,
-    status: 'ONLINE' as const,
-    joinedAt: '2023-08-15T00:00:00.000Z',
-    owes: 0,
-    isOwed: 120.50,
-    tasksCompleted: 8,
-    tasksPending: 2,
-  },
-  {
-    id: '2',
-    name: 'John Doe',
-    avatar: 'https://i.pravatar.cc/150?img=8',
-    role: 'MEMBER' as const,
-    status: 'AWAY' as const,
-    joinedAt: '2023-08-15T00:00:00.000Z',
-    owes: 75.25,
-    isOwed: 0,
-    tasksCompleted: 5,
-    tasksPending: 1,
-  },
-  {
-    id: '3',
-    name: 'Emily Johnson',
-    avatar: 'https://i.pravatar.cc/150?img=5',
-    role: 'MEMBER' as const,
-    status: 'ONLINE' as const,
-    joinedAt: '2023-08-15T00:00:00.000Z',
-    owes: 45.00,
-    isOwed: 30.75,
-    tasksCompleted: 7,
-    tasksPending: 0,
-  },
-  {
-    id: '4',
-    name: 'Michael Brown',
-    avatar: 'https://i.pravatar.cc/150?img=12',
-    role: 'MEMBER' as const,
-    status: 'OFFLINE' as const,
-    joinedAt: '2023-09-01T00:00:00.000Z',
-    owes: 0,
-    isOwed: 0,
-    tasksCompleted: 3,
-    tasksPending: 2,
-  },
-];
-
 export default function DashboardPage() {
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
@@ -79,34 +28,72 @@ export default function DashboardPage() {
   const [inviteMessage, setInviteMessage] = useState('');
   const [showWelcomeMessage, setShowWelcomeMessage] = useState(false);
   const [currentHouseholdId, setCurrentHouseholdId] = useState('');
+  const [members, setMembers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
-// Add this useEffect immediately after the useState declarations
-useEffect(() => {
-  const fetchUserHousehold = async () => {
-    try {
-      const { data: { session } } = await supabaseClient.auth.getSession();
-      
-      if (session) {
-        // Get the user's primary household
-        const { data: householdUser, error } = await supabaseClient
-          .from('HouseholdUser')
-          .select('householdId')
-          .eq('userId', session.user.id)
-          .order('joinedAt', { ascending: false })
-          .limit(1)
-          .single();
+  // Fetch the user's primary household
+  useEffect(() => {
+    const fetchUserHousehold = async () => {
+      try {
+        const { data: { session } } = await supabaseClient.auth.getSession();
         
-        if (!error && householdUser) {
-          setCurrentHouseholdId(householdUser.householdId);
+        if (session) {
+          // Get the user's primary household
+          const { data: householdUser, error } = await supabaseClient
+            .from('HouseholdUser')
+            .select('householdId')
+            .eq('userId', session.user.id)
+            .order('joinedAt', { ascending: false })
+            .limit(1)
+            .single();
+          
+          if (!error && householdUser) {
+            console.log('Found household ID:', householdUser.householdId);
+            setCurrentHouseholdId(householdUser.householdId);
+          }
         }
+      } catch (error) {
+        console.error('Error fetching household:', error);
       }
-    } catch (error) {
-      console.error('Error fetching household:', error);
-    }
-  };
+    };
 
-  fetchUserHousehold();
-}, []);
+    fetchUserHousehold();
+  }, []);
+  
+  // Fetch household members when household ID is available
+  useEffect(() => {
+    const fetchMembers = async () => {
+      // Only attempt to fetch if we have a valid household ID
+      if (!currentHouseholdId || currentHouseholdId === 'undefined') {
+        return;
+      }
+      
+      try {
+        setLoading(true);
+        console.log('Fetching members for household ID:', currentHouseholdId);
+        
+        // Use the API endpoint to fetch members
+        const response = await fetch(`/api/households/${currentHouseholdId}/members`);
+        
+        if (!response.ok) {
+          throw new Error(`Failed to fetch members: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        console.log('Fetched members:', data);
+        setMembers(data);
+        setError('');
+      } catch (err) {
+        console.error('Error fetching members:', err);
+        setError('Failed to load household members');
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    fetchMembers();
+  }, [currentHouseholdId]);
   
   const searchParams = useSearchParams();
   
@@ -124,14 +111,9 @@ useEffect(() => {
     }
   }, [searchParams]);
 
-  // In a real app, you would fetch this data from your API
-  // For now, we'll use mock data
-
   const handleInviteSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    // Here you would send the invitation to your API
     console.log('Inviting:', { email: inviteEmail, role: inviteRole, message: inviteMessage });
-    // Close the modal and reset form
     setShowInviteModal(false);
     setInviteEmail('');
     setInviteRole('MEMBER');
@@ -186,8 +168,7 @@ useEffect(() => {
             memberCount={MOCK_HOUSEHOLD.memberCount}
             pendingExpenses={MOCK_HOUSEHOLD.pendingExpenses}
             upcomingTasks={MOCK_HOUSEHOLD.upcomingTasks}
-            unreadMessages={MOCK_HOUSEHOLD.unreadMessages}
-          />
+            unreadMessages={MOCK_HOUSEHOLD.unreadMessages} householdId={''}          />
           
           {/* Quick Action Buttons */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
@@ -334,11 +315,34 @@ useEffect(() => {
         </div>
       </div>
       
-      {/* Members Grid */}
-      <MemberGrid 
-        members={MOCK_MEMBERS} 
-        onInvite={() => setShowInviteModal(true)} 
-      />
+      {/* Members Grid - Only shown when we have a valid household ID */}
+      {currentHouseholdId ? (
+        loading ? (
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+            <div className="flex items-center justify-center h-40">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 dark:border-white"></div>
+            </div>
+          </div>
+        ) : error ? (
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+            <div className="text-red-600 dark:text-red-400">
+              {error}
+            </div>
+          </div>
+        ) : (
+          <MemberGrid 
+            householdId={currentHouseholdId}
+            members={members}
+            onInvite={() => setShowInviteModal(true)} 
+          />
+        )
+      ) : (
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+          <p className="text-center text-gray-500 dark:text-gray-400">
+            No household selected. Please join or create a household.
+          </p>
+        </div>
+      )}
 
       {/* Invite Modal - Using the new component */}
       {showInviteModal && (

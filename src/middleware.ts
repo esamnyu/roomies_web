@@ -1,9 +1,7 @@
-// src/middleware.ts
-import { NextResponse } from 'next/server';
-import type { NextRequest } from 'next/server';
-import { createMiddlewareClient } from '@supabase/auth-helpers-nextjs';
+import { NextResponse, type NextRequest } from 'next/server';
+import { createServerClient, type CookieOptions } from '@supabase/ssr';
 
-// List of paths that don't require authentication
+// List of paths that don't require authentication (keep your existing list)
 const publicPaths = [
   '/',
   '/login',
@@ -12,119 +10,119 @@ const publicPaths = [
   '/reset-password',
   '/auth/callback',  // Supabase auth callback
   '/invite',  // For invitation links
-  '/api/auth/register',
-  '/api/auth/login',
-  '/api/auth/forgot-password',
-  '/api/auth/reset-password',
+  '/api/auth/register', // Keep if still using custom backend registration
+  '/api/auth/login', // Keep if still using custom backend login
+  '/api/auth/forgot-password', // Keep for password reset flow
+  '/api/auth/reset-password', // Keep for password reset flow
   '/api/invitations',  // Allow checking invitations without auth
-  // REMOVED: '/api/tasks', // Temporarily bypassing auth for tasks API
-  '/api/debug-cookies', // Add this for debugging cookie issues
+  '/api/debug-cookies',
+  '/api/test-auth',
 ];
 
 export async function middleware(request: NextRequest) {
-  // Check if the path is public
-  const { pathname } = request.nextUrl;
+  let response = NextResponse.next({
+    request: {
+      headers: request.headers,
+    },
+  });
 
-  // Add debugging for middleware processing
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        get(name: string) {
+          return request.cookies.get(name)?.value;
+        },
+        set(name: string, value: string, options: CookieOptions) {
+          // If the cookie is updated, update the request for downstream routes
+          request.cookies.set({
+            name,
+            value,
+            ...options,
+          });
+          response = NextResponse.next({
+            request: {
+              headers: request.headers,
+            },
+          });
+          // Set the cookie on the response
+          response.cookies.set({
+            name,
+            value,
+            ...options,
+          });
+        },
+        remove(name: string, options: CookieOptions) {
+          // If the cookie is removed, update the request for downstream routes
+          request.cookies.delete(name);
+          response = NextResponse.next({
+            request: {
+              headers: request.headers,
+            },
+          });
+          // Remove the cookie from the response
+          response.cookies.set({
+            name,
+            value: '',
+            ...options,
+          });
+        },
+      },
+    }
+  );
+
+  const { pathname } = request.nextUrl;
   console.log(`Middleware processing: ${pathname}`);
 
-  // Allow access to static files and public routes without authentication
-  if (
-    pathname.startsWith('/_next') ||
-    pathname.startsWith('/static') ||
-    pathname.startsWith('/api/test') ||
-    publicPaths.some(path => pathname === path || pathname.startsWith(path))
-  ) {
-    console.log(`Public path access: ${pathname}`);
-    return NextResponse.next();
+  // Refresh session (important for Server Components): https://supabase.com/docs/guides/auth/server-side/nextjs
+  // getUser() validates the session and refreshes the token if necessary
+  const { data: { user }, error: userError } = await supabase.auth.getUser();
+
+  if (userError) {
+      console.error(`Middleware getUser error: ${userError.message}`);
+      // Handle potential errors during getUser, maybe log them differently
   }
 
-  // Create a Supabase client for the middleware
-  const res = NextResponse.next();
-  const supabase = createMiddlewareClient({ req: request, res });
+  // --- Authentication Check ---
+  const isPublicPath = publicPaths.some(path => pathname === path || pathname.startsWith(path));
+  const isStaticAsset = pathname.startsWith('/_next') || pathname.startsWith('/static') || pathname.includes('favicon.ico');
 
-  try {
-    // Check if user is authenticated with Supabase
-    const {
-      data: { session },
-      error: sessionError
-    } = await supabase.auth.getSession();
+  if (!user && !isPublicPath && !isStaticAsset) {
+    // No user, not a public path, not a static asset -> PROTECT
+    console.log(`Authentication required for: ${pathname}. Redirecting to login.`);
 
-    // Log session information for debugging
-    if (session) {
-      console.log(`Active session found for user: ${session.user.id}`);
-    } else {
-      console.log(`No active session found for: ${pathname}`);
-      if (sessionError) {
-        console.error(`Session error: ${sessionError.message}`);
-      }
-    }
-
-    // Handle session refresh if needed
-    if (session?.expires_at && session.expires_at < Math.floor(Date.now() / 1000)) {
-      console.log('Session expired, attempting refresh');
-      const { data: { session: refreshedSession }, error: refreshError } = await supabase.auth.refreshSession();
-
-      if (refreshError) {
-        console.error(`Session refresh error: ${refreshError.message}`);
-      }
-
-      if (!refreshedSession) {
-        console.log('Session refresh failed, redirecting to login');
-
-        // For API routes, return JSON error instead of redirecting
-        if (pathname.startsWith('/api/')) {
-          return NextResponse.json({
-            error: 'Authentication required - session expired',
-            path: pathname
-          }, { status: 401 });
-        }
-
-        // For regular routes, redirect to login
-        const redirectUrl = new URL('/login', request.url);
-        redirectUrl.searchParams.set('callbackUrl', pathname);
-        return NextResponse.redirect(redirectUrl);
-      } else {
-        console.log('Session refresh successful');
-      }
-    }
-
-    // If there's no session and the path is not public, handle accordingly
-    if (!session && !publicPaths.some(path => pathname === path || pathname.startsWith(path))) {
-      console.log(`Authentication required for: ${pathname}`);
-
-      // Special handling for API routes
-      if (pathname.startsWith('/api/')) {
-        console.log(`API authentication failed: ${pathname}`);
-        return NextResponse.json({
-          error: 'Authentication required',
-          path: pathname,
-          message: 'You must be logged in to access this API endpoint'
-        }, { status: 401 });
-      }
-
-      // Redirect to login for regular routes
-      const redirectUrl = new URL('/login', request.url);
-      redirectUrl.searchParams.set('callbackUrl', pathname);
-      return NextResponse.redirect(redirectUrl);
-    }
-
-    return res;
-  } catch (error) {
-    console.error(`Middleware error: ${error instanceof Error ? error.message : 'Unknown error'}`);
-
-    // For API routes, return a JSON error
-    if (pathname.startsWith('/api/')) {
-      return NextResponse.json({
-        error: 'Authentication error',
-        message: 'An error occurred while checking authentication'
-      }, { status: 500 });
-    }
-
-    // For regular routes, redirect to login
     const redirectUrl = new URL('/login', request.url);
-    return NextResponse.redirect(redirectUrl);
+    redirectUrl.searchParams.set('callbackUrl', pathname); // Pass the intended path
+
+    // For API routes, return 401 JSON instead of redirecting
+    if (pathname.startsWith('/api/')) {
+      console.log(`API authentication failed: ${pathname}`);
+      // Ensure the response from NextResponse.json also includes updated cookies if any were set/removed
+      const apiResponse = NextResponse.json(
+          { error: 'Authentication required', path: pathname },
+          { status: 401 }
+      );
+      // Copy cookies from the potentially modified 'response' object
+      response.cookies.getAll().forEach(cookie => apiResponse.cookies.set(cookie));
+      return apiResponse;
+    }
+
+    // For regular pages, redirect
+    // Ensure the redirect response also includes updated cookies
+    const redirectResponse = NextResponse.redirect(redirectUrl);
+    response.cookies.getAll().forEach(cookie => redirectResponse.cookies.set(cookie));
+    return redirectResponse;
+
+  } else if (user) {
+      console.log(`Active session found for user: ${user.id} at ${pathname}`);
+      // You could potentially add user role checks here if needed
+  } else {
+      console.log(`Public path access: ${pathname}`);
   }
+
+  // Return the potentially modified response (with updated cookies)
+  return response;
 }
 
 // Configure the middleware to run on specific paths
@@ -135,6 +133,7 @@ export const config = {
      * - _next/static (static files)
      * - _next/image (image optimization files)
      * - favicon.ico (favicon file)
+     * We will handle static asset checks inside the middleware itself.
      */
     '/((?!_next/static|_next/image|favicon.ico).*)',
   ],

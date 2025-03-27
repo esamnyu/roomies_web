@@ -1,104 +1,135 @@
 // src/app/api/households/[id]/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+// Removed Prisma import
+// import { prisma } from '@/lib/prisma';
 import { getServerSession } from 'next-auth';
-import { authOptions } from '@/app/api/auth/[...nextauth]/route';
+import { authOptions } from '@/app/api/auth/[...nextauth]/route'; // Ensure this path is correct
+import { createServerClient, type CookieOptions } from '@supabase/ssr';
+import { cookies } from 'next/headers';
 
-// GET /api/households/[id] - Get a specific household
+// Helper function to create Supabase client in Route Handlers
+// Ensure you have a similar setup or import from a shared lib
+async function createSupabaseRouteHandlerClient() {
+  const cookieStore = await cookies();
+  return createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        get(name: string) {
+          return cookieStore.get(name)?.value;
+        },
+        set(name: string, value: string, options: CookieOptions) {
+          try {
+            cookieStore.set({ name, value, ...options });
+          } catch (error) {
+            // Handle potential errors during cookie setting (e.g., read-only headers)
+            console.error("Error setting cookie:", name, error);
+          }
+        },
+        remove(name: string, options: CookieOptions) {
+          try {
+            cookieStore.set({ name, value: '', ...options });
+          } catch (error) {
+            // Handle potential errors during cookie removal
+            console.error("Error removing cookie:", name, error);
+          }
+        },
+      },
+    }
+  );
+}
+
+// Helper: Check household membership and optionally admin role
+// Returns { authorized: boolean, membership?: any, error?: string, status?: number }
+async function checkHouseholdAccess(supabase: any, householdId: string, userId: string, requireAdmin = false) {
+    const { data: membership, error } = await supabase
+      .from('HouseholdUser')
+      .select('userId, role') // Select role for admin check
+      .eq('userId', userId)
+      .eq('householdId', householdId)
+      .single(); // Expecting one record or null/error
+
+    if (error) {
+        console.error("Error checking household membership:", householdId, userId, error);
+        // Distinguish between "not found" (handled below) and other errors
+        if (error.code === 'PGRST116') { // code for "No rows returned"
+             return { authorized: false, error: 'You are not a member of this household.', status: 403 };
+        }
+        return { authorized: false, error: 'Failed to verify household membership.', status: 500 };
+    }
+    // PGRST116 should handle not found, but safety check
+    if (!membership) {
+        return { authorized: false, error: 'You are not a member of this household.', status: 403 };
+    }
+    if (requireAdmin && membership.role !== 'ADMIN') {
+        return { authorized: false, error: 'Only household admins can perform this action.', status: 403 };
+    }
+    // Return the membership object which contains the role
+    return { authorized: true, membership };
+}
+
+
+// GET /api/households/[id] - Get a specific household's details
 export async function GET(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  const supabase = createSupabaseRouteHandlerClient();
   try {
-    const session = await getServerSession(authOptions);
-    
-    if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-    
+    const { data: { session }, error: sessionError } = await (await supabase).auth.getSession();
+    if (sessionError) throw new Error(sessionError.message);
+    if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
     const householdId = params.id;
-    
-    // Check if user is a member of the household
-    const householdUser = await prisma.householdUser.findUnique({
-      where: {
-        userId_householdId: {
-          userId: session.user.id,
-          householdId: householdId,
-        },
-      },
-    });
-    
-    if (!householdUser) {
-      return NextResponse.json({ error: 'You are not a member of this household' }, { status: 403 });
+    if (!householdId) return NextResponse.json({ error: 'Household ID is required' }, { status: 400 });
+
+    // 1. Check if user is a member of the household
+    const accessCheck = await checkHouseholdAccess(supabase, householdId, session.user.id);
+    if (!accessCheck.authorized) {
+        return NextResponse.json({ error: accessCheck.error }, { status: accessCheck.status });
     }
-    
-    // Get the household with related data
-    const household = await prisma.household.findUnique({
-      where: {
-        id: householdId,
-      },
-      include: {
-        members: {
-          include: {
-            user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                avatar: true,
-              },
-            },
-          },
-        },
-        expenses: {
-          orderBy: {
-            date: 'desc',
-          },
-          take: 5, // Only include recent expenses
-        },
-        tasks: {
-          where: {
-            status: {
-              not: 'COMPLETED',
-            },
-          },
-          orderBy: [
-            {
-              priority: 'desc',
-            },
-            {
-              dueDate: 'asc',
-            },
-          ],
-          take: 5, // Only include important pending tasks
-        },
-        messages: {
-          orderBy: {
-            createdAt: 'desc',
-          },
-          take: 10, // Only include recent messages
-          include: {
-            sender: {
-              select: {
-                id: true,
-                name: true,
-                avatar: true,
-              },
-            },
-          },
-        },
-        rules: true,
-      },
-    });
-    
-    if (!household) {
-      return NextResponse.json({ error: 'Household not found' }, { status: 404 });
+
+    // 2. Get the household with related data (basic example)
+    // Fetching limited/filtered related data might require multiple queries or a DB function
+    const { data: household, error: fetchError } = await (await supabase)
+      .from('Household')
+      .select(`
+        *,
+        members:HouseholdUser(
+            *,
+            user:User!userId(id, name, email, avatar)
+        ),
+        expenses:Expense( * ),
+        tasks:Task( * ),
+        messages:Message( * ),
+        rules:HouseRule( * )
+      `)
+      .eq('id', householdId)
+      .single(); // Expect one household
+
+    if (fetchError) {
+        console.error('Error fetching household details:', fetchError);
+        // Check if it's a "not found" error
+        if (fetchError.code === 'PGRST116') {
+             return NextResponse.json({ error: 'Household not found.' }, { status: 404 });
+        }
+        return NextResponse.json({ error: 'Failed to fetch household details.' }, { status: 500 });
     }
-    
+     if (!household) { // Should be caught by PGRST116, but safety check
+      return NextResponse.json({ error: 'Household not found.' }, { status: 404 });
+    }
+
+     // You might want to manually limit related data here if needed, e.g.:
+     // household.expenses = household.expenses?.slice(0, 5);
+     // household.tasks = household.tasks?.filter(t => t.status !== 'COMPLETED').slice(0, 5);
+
+
     return NextResponse.json(household);
   } catch (error) {
-    console.error('Error fetching household:', error);
-    return NextResponse.json({ error: 'Failed to fetch household' }, { status: 500 });
+    console.error('Error in GET /api/households/[id]:', error);
+    const message = error instanceof Error ? error.message : 'Failed to fetch household';
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 
@@ -107,59 +138,75 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  const supabase = createSupabaseRouteHandlerClient();
   try {
-    const session = await getServerSession(authOptions);
-    
-    if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-    
+    const { data: { session }, error: sessionError } = await (await supabase).auth.getSession();
+    if (sessionError) throw new Error(sessionError.message);
+    if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
     const householdId = params.id;
-    const data = await request.json();
-    
-    // Check if user is an admin of the household
-    const householdUser = await prisma.householdUser.findUnique({
-      where: {
-        userId_householdId: {
-          userId: session.user.id,
-          householdId: householdId,
-        },
-      },
-    });
-    
-    if (!householdUser) {
-      return NextResponse.json({ error: 'You are not a member of this household' }, { status: 403 });
+    if (!householdId) return NextResponse.json({ error: 'Household ID is required' }, { status: 400 });
+
+    // 1. Check if user is an ADMIN of the household
+    const accessCheck = await checkHouseholdAccess(supabase, householdId, session.user.id, true); // requireAdmin = true
+    if (!accessCheck.authorized) {
+        return NextResponse.json({ error: accessCheck.error }, { status: accessCheck.status });
     }
-    
-    if (householdUser.role !== 'ADMIN') {
-      return NextResponse.json({ error: 'Only household admins can update household information' }, { status: 403 });
+
+    // 2. Get update data from request body
+    const body = await request.json();
+    const { name, address } = body;
+
+    // Prepare update data, only include fields that are provided
+    const updateData: { name?: string, address?: string | null, updatedAt: string } = {
+        updatedAt: new Date().toISOString() // Always update updatedAt timestamp
+    };
+    if (name !== undefined) {
+        if (typeof name !== 'string' || name.trim() === '') {
+            return NextResponse.json({ error: 'Household name cannot be empty' }, { status: 400 });
+        }
+        updateData.name = name.trim();
     }
-    
-    // Extract the fields we want to update
-    const { name, address } = data;
-    
-    // Validate required fields
-    if (name !== undefined && name.trim() === '') {
-      return NextResponse.json({ error: 'Household name cannot be empty' }, { status: 400 });
+    if (address !== undefined) {
+        // Allow setting address to null or a non-empty string
+        updateData.address = (typeof address === 'string' && address.trim() !== '') ? address.trim() : null;
     }
-    
-    // Prepare update data
-    const updateData: any = {};
-    if (name !== undefined) updateData.name = name;
-    if (address !== undefined) updateData.address = address;
-    
-    // Update the household
-    const updatedHousehold = await prisma.household.update({
-      where: {
-        id: householdId,
-      },
-      data: updateData,
-    });
-    
+
+     // Check if there's anything to update besides the timestamp
+     if (Object.keys(updateData).length <= 1) {
+        // If only updatedAt is present, maybe return current data or 304 Not Modified?
+        // Or return an error indicating nothing was changed.
+        return NextResponse.json({ error: 'No valid fields provided for update' }, { status: 400 });
+     }
+
+
+    // 3. Update the household
+    const { data: updatedHousehold, error: updateError } = await (await supabase)
+      .from('Household')
+      .update(updateData)
+      .eq('id', householdId)
+      .select() // Select the updated household data
+      .single();
+
+     if (updateError) {
+        console.error('Error updating household:', updateError);
+        // Check for specific errors like not found if needed
+        if (updateError.code === 'PGRST116') {
+            return NextResponse.json({ error: 'Household not found.' }, { status: 404 });
+        }
+        return NextResponse.json({ error: 'Failed to update household.' }, { status: 500 });
+     }
+      if (!updatedHousehold) {
+        // Should not happen if update was successful and no error, but check anyway
+         return NextResponse.json({ error: 'Household not found after update attempt.' }, { status: 404 });
+      }
+
+
     return NextResponse.json(updatedHousehold);
   } catch (error) {
-    console.error('Error updating household:', error);
-    return NextResponse.json({ error: 'Failed to update household' }, { status: 500 });
+    console.error('Error in PATCH /api/households/[id]:', error);
+    const message = error instanceof Error ? error.message : 'Failed to update household';
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 
@@ -168,297 +215,132 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  try {
-    const session = await getServerSession(authOptions);
-    
-    if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-    
-    const householdId = params.id;
-    
-    // Check if user is an admin of the household
-    const householdUser = await prisma.householdUser.findUnique({
-      where: {
-        userId_householdId: {
-          userId: session.user.id,
-          householdId: householdId,
-        },
-      },
-    });
-    
-    if (!householdUser) {
-      return NextResponse.json({ error: 'You are not a member of this household' }, { status: 403 });
-    }
-    
-    if (householdUser.role !== 'ADMIN') {
-      return NextResponse.json({ error: 'Only household admins can delete a household' }, { status: 403 });
-    }
-    
-    // Count the number of members in the household
-    const membersCount = await prisma.householdUser.count({
-      where: {
-        householdId: householdId,
-      },
-    });
-    
-    // If there are other members, prevent deletion
-    if (membersCount > 1) {
-      return NextResponse.json({ 
-        error: 'Cannot delete a household with active members. Remove all members first or transfer admin rights.' 
-      }, { status: 400 });
-    }
-    
-    // Delete the household - this should cascade delete all related records
-    await prisma.household.delete({
-      where: {
-        id: householdId,
-      },
-    });
-    
-    return NextResponse.json({ message: 'Household deleted successfully' });
-  } catch (error) {
-    console.error('Error deleting household:', error);
-    return NextResponse.json({ error: 'Failed to delete household' }, { status: 500 });
-  }
-}
+    const supabase = createSupabaseRouteHandlerClient();
+    try {
+      const { data: { session }, error: sessionError } = await (await supabase).auth.getSession();
+      if (sessionError) throw new Error(sessionError.message);
+      if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-// POST /api/households/[id]/members - Add a member to the household
-export async function POST(
-  request: NextRequest,
-  { params }: { params: { id: string } }
-) {
-  try {
-    const session = await getServerSession(authOptions);
-    
-    if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-    
-    const householdId = params.id;
-    const { email, role = 'MEMBER' } = await request.json();
-    
-    // Check if the current user is a member and admin of the household
-    const householdUser = await prisma.householdUser.findUnique({
-      where: {
-        userId_householdId: {
-          userId: session.user.id,
-          householdId: householdId,
-        },
-      },
-    });
-    
-    if (!householdUser) {
-      return NextResponse.json({ error: 'You are not a member of this household' }, { status: 403 });
-    }
-    
-    if (householdUser.role !== 'ADMIN') {
-      return NextResponse.json({ error: 'Only household admins can add members' }, { status: 403 });
-    }
-    
-    // Find the user by email
-    const user = await prisma.user.findUnique({
-      where: {
-        email,
-      },
-    });
-    
-    if (!user) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 });
-    }
-    
-    // Check if the user is already a member of the household
-    const existingMember = await prisma.householdUser.findUnique({
-      where: {
-        userId_householdId: {
-          userId: user.id,
-          householdId: householdId,
-        },
-      },
-    });
-    
-    if (existingMember) {
-      return NextResponse.json({ error: 'User is already a member of this household' }, { status: 400 });
-    }
-    
-    // Add the user to the household
-    const newMember = await prisma.householdUser.create({
-      data: {
-        userId: user.id,
-        householdId: householdId,
-        role: role as 'ADMIN' | 'MEMBER' | 'GUEST',
-      },
-      include: {
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            avatar: true,
-          },
-        },
-      },
-    });
-    
-    // TODO: In a real app, send an invitation email or notification to the user
-    
-    return NextResponse.json(newMember);
-  } catch (error) {
-    console.error('Error adding household member:', error);
-    return NextResponse.json({ error: 'Failed to add household member' }, { status: 500 });
-  }
-}
+      const householdId = params.id;
+      if (!householdId) return NextResponse.json({ error: 'Household ID is required' }, { status: 400 });
 
-// Additional household member management APIs
-
-// PATCH /api/households/[id]/members/[userId] - Update a member's role
-export async function PATCH_MEMBER(
-  request: NextRequest,
-  { params }: { params: { id: string, userId: string } }
-) {
-  try {
-    const session = await getServerSession(authOptions);
-    
-    if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-    
-    const { id: householdId, userId } = params;
-    const { role } = await request.json();
-    
-    // Check if the current user is a member and admin of the household
-    const currentUserMembership = await prisma.householdUser.findUnique({
-      where: {
-        userId_householdId: {
-          userId: session.user.id,
-          householdId: householdId,
-        },
-      },
-    });
-    
-    if (!currentUserMembership) {
-      return NextResponse.json({ error: 'You are not a member of this household' }, { status: 403 });
-    }
-    
-    if (currentUserMembership.role !== 'ADMIN') {
-      return NextResponse.json({ error: 'Only household admins can update member roles' }, { status: 403 });
-    }
-    
-    // Prevent changing your own role (to avoid removing the last admin)
-    if (userId === session.user.id) {
-      return NextResponse.json({ error: 'You cannot change your own role' }, { status: 400 });
-    }
-    
-    // Update the member's role
-    const updatedMember = await prisma.householdUser.update({
-      where: {
-        userId_householdId: {
-          userId: userId,
-          householdId: householdId,
-        },
-      },
-      data: {
-        role: role as 'ADMIN' | 'MEMBER' | 'GUEST',
-      },
-      include: {
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            avatar: true,
-          },
-        },
-      },
-    });
-    
-    return NextResponse.json(updatedMember);
-  } catch (error) {
-    console.error('Error updating member role:', error);
-    return NextResponse.json({ error: 'Failed to update member role' }, { status: 500 });
-  }
-}
-
-// DELETE /api/households/[id]/members/[userId] - Remove a member from the household
-export async function DELETE_MEMBER(
-  request: NextRequest,
-  { params }: { params: { id: string, userId: string } }
-) {
-  try {
-    const session = await getServerSession(authOptions);
-    
-    if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-    
-    const { id: householdId, userId } = params;
-    
-    // User can remove themselves, or admins can remove others
-    const isCurrentUser = userId === session.user.id;
-    
-    if (!isCurrentUser) {
-      // Check if the current user is a member and admin of the household
-      const currentUserMembership = await prisma.householdUser.findUnique({
-        where: {
-          userId_householdId: {
-            userId: session.user.id,
-            householdId: householdId,
-          },
-        },
-      });
-      
-      if (!currentUserMembership) {
-        return NextResponse.json({ error: 'You are not a member of this household' }, { status: 403 });
+      // 1. Check if user is an ADMIN of the household
+      const accessCheck = await checkHouseholdAccess(supabase, householdId, session.user.id, true); // requireAdmin = true
+      if (!accessCheck.authorized) {
+          return NextResponse.json({ error: accessCheck.error }, { status: accessCheck.status });
       }
-      
-      if (currentUserMembership.role !== 'ADMIN') {
-        return NextResponse.json({ error: 'Only household admins can remove members' }, { status: 403 });
+
+      // 2. Count members - prevent deletion if other members exist (safer default)
+      const { count: membersCount, error: countError } = await (await supabase)
+        .from('HouseholdUser')
+        .select('*', { count: 'exact', head: true })
+        .eq('householdId', householdId);
+
+      if (countError) {
+           console.error('Error counting household members:', countError);
+           return NextResponse.json({ error: 'Failed to verify member count before deletion.' }, { status: 500 });
       }
-    }
-    
-    // Check if the user to be removed is an admin
-    const memberToRemove = await prisma.householdUser.findUnique({
-      where: {
-        userId_householdId: {
-          userId: userId,
-          householdId: householdId,
-        },
-      },
-    });
-    
-    if (!memberToRemove) {
-      return NextResponse.json({ error: 'Member not found in the household' }, { status: 404 });
-    }
-    
-    // If removing an admin, check if they're the last admin
-    if (memberToRemove.role === 'ADMIN') {
-      const adminCount = await prisma.householdUser.count({
-        where: {
-          householdId: householdId,
-          role: 'ADMIN',
-        },
-      });
-      
-      if (adminCount <= 1) {
-        return NextResponse.json({ 
-          error: 'Cannot remove the last admin. Assign another admin first.' 
+
+      // Check if the count is null (shouldn't happen but safety check) or greater than 1
+      if (membersCount === null || membersCount > 1) {
+        return NextResponse.json({
+          error: `Cannot delete household with ${membersCount ?? '?'} members. Remove other members first.`
         }, { status: 400 });
       }
+       // If count is 1, it must be the current admin user
+
+
+      // --- Transaction Start (Conceptual - Use Supabase Function for real transaction) ---
+      console.warn(`Executing household ${householdId} deletion WITHOUT a database transaction. Use a DB function for production.`);
+
+      // 3. Delete related records (order might matter based on constraints)
+      // IMPORTANT: Add deletion for ALL related tables (Tasks, Messages, Rules, Expenses, Payments, Splits, Invitations etc.)
+
+      // Fetch Expense IDs first
+      const { data: expensesToDelete, error: expenseIdsError } = await (await supabase)
+        .from('Expense')
+        .select('id')
+        .eq('householdId', householdId);
+
+      if (expenseIdsError) {
+        console.error("Error fetching expense IDs for deletion:", expenseIdsError);
+        return NextResponse.json({ error: 'Failed to get related expense IDs.' }, { status: 500 });
+      }
+
+      // Check if there are any expenses before attempting to delete related items
+      if (expensesToDelete && expensesToDelete.length > 0) {
+        const expenseIds = expensesToDelete.map(e => e.id); // Extract IDs into an array
+
+        // Now use the array of IDs in the .in() filter
+        const { error: deleteSplitsError } = await (await supabase).from('ExpenseSplit').delete().in('expenseId', expenseIds);
+        if (deleteSplitsError) console.error("Error deleting ExpenseSplits:", deleteSplitsError); // Log error, continue cleanup
+
+        const { error: deletePaymentsError } = await (await supabase).from('Payment').delete().in('expenseId', expenseIds);
+         if (deletePaymentsError) console.error("Error deleting Payments:", deletePaymentsError); // Log error, continue cleanup
+
+        // Delete the Expenses themselves after related items
+        const { error: deleteExpensesError } = await (await supabase).from('Expense').delete().in('id', expenseIds);
+         if (deleteExpensesError) console.error("Error deleting Expenses:", deleteExpensesError); // Log error, continue cleanup
+      } else {
+        console.log(`No expenses found for household ${householdId} to delete related data for.`);
+      }
+
+      // ... add deletes for Task, Message, HouseRule, Invitation, etc. ...
+      // Example:
+      const { error: deleteTasksError } = await (await supabase).from('Task').delete().eq('householdId', householdId);
+      if (deleteTasksError) console.error("Error deleting Tasks:", deleteTasksError);
+
+      const { error: deleteMessagesError } = await (await supabase).from('Message').delete().eq('householdId', householdId);
+       if (deleteMessagesError) console.error("Error deleting Messages:", deleteMessagesError);
+
+       const { error: deleteRulesError } = await (await supabase).from('HouseRule').delete().eq('householdId', householdId);
+       if (deleteRulesError) console.error("Error deleting HouseRules:", deleteRulesError);
+
+       const { error: deleteInvitesError } = await (await supabase).from('Invitation').delete().eq('householdId', householdId);
+       if (deleteInvitesError) console.error("Error deleting Invitations:", deleteInvitesError);
+
+
+      // Finally, delete HouseholdUser entries (should only be the admin left)
+      const { error: deleteMembersError } = await (await supabase).from('HouseholdUser').delete().eq('householdId', householdId);
+       if (deleteMembersError) {
+            console.error("Error deleting HouseholdUsers:", deleteMembersError);
+            // This is critical, if this fails, the household delete might fail too.
+            return NextResponse.json({ error: 'Failed to delete household membership record.' }, { status: 500 });
+       }
+
+
+      // 4. Delete the household itself
+      const { data: deletedHousehold, error: deleteHouseholdError } = await (await supabase)
+        .from('Household')
+        .delete()
+        .eq('id', householdId)
+        .select() // Optionally select the deleted row (or just check error)
+        .maybeSingle(); // Use maybeSingle in case it was already deleted
+
+      if (deleteHouseholdError) {
+        console.error('Error deleting household:', deleteHouseholdError);
+         // If the household delete failed, related data might be partially deleted (BAD)
+        return NextResponse.json({ error: 'Failed to delete household record. Related data might be inconsistent.' }, { status: 500 });
+      }
+      if (!deletedHousehold && !deleteHouseholdError){
+        // This case means the household didn't exist when delete was attempted.
+        // Could be considered success or a 404 depending on desired behavior.
+        console.log(`Household ${householdId} not found during delete, potentially already deleted.`);
+         // Returning success as the end state (household gone) is achieved.
+      }
+      // --- Transaction End (Conceptual) ---
+
+
+      return NextResponse.json({ message: 'Household deleted successfully' });
+
+    } catch (error) {
+      console.error('Error in DELETE /api/households/[id]:', error);
+      const message = error instanceof Error ? error.message : 'Failed to delete household';
+      return NextResponse.json({ error: message }, { status: 500 });
     }
-    
-    // Remove the household member
-    await prisma.householdUser.delete({
-      where: {
-        userId_householdId: {
-          userId: userId,
-          householdId: householdId,
-        },
-      },
-    });
-    
-    return NextResponse.json({ message: 'Member removed successfully' });
-  } catch (error) {
-    console.error('Error removing household member:', error);
-    return NextResponse.json({ error: 'Failed to remove household member' }, { status: 500 });
-  }
 }
+
+// NOTE: Member management endpoints (POST add, PATCH role, DELETE member)
+// were in the original Prisma file but should ideally be in separate routes
+// like /api/households/[id]/members and /api/households/[id]/members/[userId]
+// They would need similar refactoring using Supabase.
