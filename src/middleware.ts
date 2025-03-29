@@ -19,6 +19,7 @@ const publicPaths = [
   '/api/test-auth',
 ];
 
+
 export async function middleware(request: NextRequest) {
   let response = NextResponse.next({
     request: {

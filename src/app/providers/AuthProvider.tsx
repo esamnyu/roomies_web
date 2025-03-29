@@ -2,10 +2,11 @@
 'use client';
 
 import { createContext, useContext, useEffect, useState } from 'react';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+// *** FIX 1: Import createClient and types from @supabase/supabase-js ***
+import { createClient, SupabaseClient, Session, AuthChangeEvent } from '@supabase/supabase-js';
 import { useRouter } from 'next/navigation';
 
-// Define user type
+// Define user type (align with your User table structure)
 type User = {
   id: string;
   email: string;
@@ -13,19 +14,31 @@ type User = {
   avatar?: string | null;
 };
 
-// Define auth context type
+// Define auth context type using imported types
 type AuthContextType = {
+  supabase: SupabaseClient; // Use imported SupabaseClient type
+  session: Session | null; // Use imported Session type
   user: User | null;
   isLoading: boolean;
-  signIn: (email: string, password: string) => Promise<{ error: any } | null>;
+  signIn: (email: string, password: string) => Promise<{ error: { message: string; } | null }>;
   signOut: () => Promise<void>;
 };
 
+// *** FIX 2: Use createClient from @supabase/supabase-js ***
+// Initialize with a default client instance
+// Ensure your environment variables are available client-side (NEXT_PUBLIC_)
+const defaultSupabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
+
 // Create context with default values
 const AuthContext = createContext<AuthContextType>({
+  supabase: defaultSupabase,
+  session: null,
   user: null,
   isLoading: true,
-  signIn: async () => null,
+  signIn: async () => ({ error: { message: 'Auth Context not initialized' } }),
   signOut: async () => {},
 });
 
@@ -35,120 +48,93 @@ export const useAuth = () => useContext(AuthContext);
 // Auth Provider component
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
+  const [session, setSession] = useState<Session | null>(null); // Use imported Session type
   const [isLoading, setIsLoading] = useState(true);
   const router = useRouter();
-  const supabase = createClientComponentClient();
+  // Create the client instance using createClient from @supabase/supabase-js
+  const [supabase] = useState(() => createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  ));
 
-  // Check for user session on mount
+  // Function to fetch user profile
+  const fetchUserProfile = async (userId: string): Promise<User | null> => {
+    const { data: userData, error: userError } = await supabase
+      .from('User') // Ensure this matches your table name
+      .select('id, name, email, avatar')
+      .eq('id', userId)
+      .single();
+
+    if (userError) {
+      console.error('Error fetching user data:', userError);
+      return null;
+    }
+    return userData ? { ...userData, email: userData.email || '' } : null;
+  };
+
+  // Check for user session on mount and listen for changes
   useEffect(() => {
-    const checkSession = async () => {
-      try {
-        const { data: { session }, error } = await supabase.auth.getSession();
-        
-        if (error) {
-          console.error('Error getting session:', error);
-          setUser(null);
-        } else if (session) {
-          // If we have a session, get the user details
-          const { data: userData, error: userError } = await supabase
-            .from('User')
-            .select('id, name, email, avatar')
-            .eq('id', session.user.id)
-            .single();
-            
-          if (userError) {
-            console.error('Error fetching user data:', userError);
-          } else if (userData) {
-            setUser(userData);
-          }
-        }
-      } catch (error) {
-        console.error('Session check error:', error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    // Set up auth state change listener
+    // *** FIX 3: Add type to event, prefix with _ if unused ***
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        if (session) {
-          // If we have a session, get the user details
-          const { data: userData, error: userError } = await supabase
-            .from('User')
-            .select('id, name, email, avatar')
-            .eq('id', session.user.id)
-            .single();
-            
-          if (!userError && userData) {
-            setUser(userData);
-          }
+      async (_event: AuthChangeEvent, session: Session | null) => {
+        setIsLoading(true);
+        setSession(session); // Store the whole session object
+        if (session?.user) {
+          const profile = await fetchUserProfile(session.user.id);
+          setUser(profile); // Set user profile from DB
         } else {
-          setUser(null);
+          setUser(null); // Clear user if session is null
         }
         setIsLoading(false);
       }
     );
 
-    checkSession();
-
     // Cleanup on unmount
     return () => {
       subscription.unsubscribe();
     };
-  }, [supabase, router]);
+  }, [supabase]); // Depend only on supabase client instance
 
-  // Custom sign in function
+  // Sign in function
   const signIn = async (email: string, password: string) => {
-    try {
-      // First, use our custom login endpoint which handles bcrypt validation
-      const response = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email, password }),
-      });
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        return { error: data.message || 'Login failed' };
-      }
-
-      // Then use Supabase Auth to create a session
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
-      if (error) {
-        return { error: error.message };
-      }
-
-      router.refresh();
-      return null;
-    } catch (error) {
+    if (error) {
       console.error('Sign in error:', error);
-      return { error: 'An unexpected error occurred' };
+      return { error: { message: error.message } };
     }
+    router.refresh();
+    return { error: null };
   };
 
   // Sign out function
   const signOut = async () => {
     try {
       await supabase.auth.signOut();
+      setUser(null);
+      setSession(null);
       router.push('/login');
-      router.refresh();
     } catch (error) {
       console.error('Sign out error:', error);
     }
   };
 
-  // Context provider
+  // Context provider value
+  const value = {
+    supabase,
+    session,
+    user,
+    isLoading,
+    signIn,
+    signOut,
+  };
+
   return (
-    <AuthContext.Provider value={{ user, isLoading, signIn, signOut }}>
-      {children}
+    <AuthContext.Provider value={value}>
+      {!isLoading ? children : null /* Or show a loading indicator */}
     </AuthContext.Provider>
   );
 }

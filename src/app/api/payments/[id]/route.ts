@@ -2,36 +2,23 @@
 import { NextRequest, NextResponse } from 'next/server';
 // Removed Prisma import
 // import { prisma } from '@/lib/prisma';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/app/api/auth/[...nextauth]/route';
-import { createServerClient, type CookieOptions } from '@supabase/ssr';
-import { cookies } from 'next/headers';
+// Removed NextAuth imports
+// import { getServerSession } from 'next-auth';
+// import { authOptions } from '@/app/api/auth/[...nextauth]/route';
+// Import the standardized Supabase client helper
+import { createServerSupabaseClient } from '@/lib/supabase-ssr'; // Adjust path if needed (check for supbase-ssr vs supabase-ssr typo)
 import { generateUUID } from '@/lib/utils'; // Assuming you have this
 
-// Helper function (same as in expenses route)
+// Removed local helper function - use imported createServerSupabaseClient instead
+/*
 async function createSupabaseRouteHandlerClient() {
-  const cookieStore = await cookies();
-  return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        get(name: string) {
-          return cookieStore.get(name)?.value;
-        },
-        set(name: string, value: string, options: CookieOptions) {
-          try { cookieStore.set({ name, value, ...options }); } catch (error) { console.error("Error setting cookie:", name, error); }
-        },
-        remove(name: string, options: CookieOptions) {
-          try { cookieStore.set({ name, value: '', ...options }); } catch (error) { console.error("Error removing cookie:", name, error); }
-        },
-      },
-    }
-  );
+  // ... implementation ...
 }
+*/
 
 // --- Helper Function to Check Permissions ---
 // Returns { allowed: boolean, paymentData?: any, membership?: any, error?: string, status?: number }
+// This helper now uses the 'supabase' client passed to it
 async function checkPaymentPermissions(supabase: any, paymentId: string, userId: string) {
     // 1. Fetch Payment with related Expense and Creator
     const { data: paymentData, error: paymentError } = await supabase
@@ -80,16 +67,21 @@ export async function GET(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const supabase = await createSupabaseRouteHandlerClient();
+  // Use the imported standardized helper
+  const supabase = await createServerSupabaseClient();
   try {
+    // Get session using Supabase client
     const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-    if (sessionError) throw new Error(sessionError.message);
+    if (sessionError) {
+        console.error('Error getting session:', sessionError);
+        return NextResponse.json({ error: 'Failed to retrieve session', details: sessionError.message }, { status: 500 });
+    }
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const paymentId = params.id;
     if (!paymentId) return NextResponse.json({ error: 'Payment ID is required' }, { status: 400 });
 
-    // Fetch the payment and check household membership in one go
+    // Fetch the payment using the 'supabase' instance from the helper
     const { data: payment, error: fetchError } = await supabase
         .from('Payment')
         .select(`
@@ -102,11 +94,6 @@ export async function GET(
             user:User!userId(id, name, email, avatar)
         `)
         .eq('id', paymentId)
-        // Add check to ensure the current user is part of the household
-        // This requires knowing the household ID, obtained via the join
-        // A direct filter like this might need adjustments based on exact Supabase capabilities or RLS
-        // Alternative: Fetch payment, then check membership separately if needed.
-        // .eq('expense.household.HouseholdUser.userId', session.user.id) // Example, might not work directly
         .single();
 
 
@@ -119,6 +106,7 @@ export async function GET(
     }
 
     // Now, explicitly verify membership (more reliable than complex filter)
+    // Use the 'supabase' instance from the helper
     const { data: membership, error: membershipError } = await supabase
         .from('HouseholdUser')
         .select('userId')
@@ -126,7 +114,10 @@ export async function GET(
         .eq('householdId', payment.expense.household.id)
         .maybeSingle();
 
-    if (membershipError) throw membershipError;
+    if (membershipError) {
+        console.error('Error checking membership:', membershipError);
+        return NextResponse.json({ error: 'Failed to verify membership', details: membershipError.message }, { status: 500 });
+    }
     if (!membership) {
         return NextResponse.json({ error: 'You are not authorized to view this payment (not member)' }, { status: 403 });
     }
@@ -145,10 +136,15 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const supabase = createSupabaseRouteHandlerClient();
+  // Use the imported standardized helper
+  const supabase = await createServerSupabaseClient();
   try {
-    const { data: { session }, error: sessionError } = await (await supabase).auth.getSession();
-    if (sessionError) throw new Error(sessionError.message);
+    // Get session using Supabase client
+    const { data: { session }, error: sessionError } = await supabase.auth.getSession(); // Corrected: Removed extra await
+    if (sessionError) {
+        console.error('Error getting session:', sessionError);
+        return NextResponse.json({ error: 'Failed to retrieve session', details: sessionError.message }, { status: 500 });
+    }
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const paymentId = params.id;
@@ -162,6 +158,7 @@ export async function PATCH(
     }
 
     // --- Check Permissions ---
+    // Pass the 'supabase' instance from the helper to the permission check function
     const permCheck = await checkPaymentPermissions(supabase, paymentId, session.user.id);
     if (!permCheck.allowed) {
         return NextResponse.json({ error: permCheck.error }, { status: permCheck.status });
@@ -191,7 +188,8 @@ export async function PATCH(
     }
 
     // Update the payment in Supabase
-    const { data: updatedPayment, error: updateError } = await (await supabase)
+    // Use the 'supabase' instance from the helper
+    const { data: updatedPayment, error: updateError } = await supabase // Corrected: Removed extra await
       .from('Payment')
       .update(updatePayload)
       .eq('id', paymentId)
@@ -227,16 +225,22 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
-    const supabase = createSupabaseRouteHandlerClient();
+    // Use the imported standardized helper
+    const supabase = await createServerSupabaseClient();
     try {
-      const { data: { session }, error: sessionError } = await (await supabase).auth.getSession();
-      if (sessionError) throw new Error(sessionError.message);
+      // Get session using Supabase client
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession(); // Corrected: Removed extra await
+      if (sessionError) {
+        console.error('Error getting session:', sessionError);
+        return NextResponse.json({ error: 'Failed to retrieve session', details: sessionError.message }, { status: 500 });
+      }
       if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
       const paymentId = params.id;
       if (!paymentId) return NextResponse.json({ error: 'Payment ID is required' }, { status: 400 });
 
       // --- Check Permissions ---
+      // Pass the 'supabase' instance from the helper
       const permCheck = await checkPaymentPermissions(supabase, paymentId, session.user.id);
       if (!permCheck.allowed) {
           return NextResponse.json({ error: permCheck.error }, { status: permCheck.status });
@@ -261,7 +265,8 @@ export async function DELETE(
 
 
       // Delete the payment
-      const { error: deleteError } = await (await supabase)
+      // Use the 'supabase' instance from the helper
+      const { error: deleteError } = await supabase // Corrected: Removed extra await
         .from('Payment')
         .delete()
         .eq('id', paymentId);
@@ -285,7 +290,8 @@ export async function POST(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const supabase = createSupabaseRouteHandlerClient();
+  // Use the imported standardized helper
+  const supabase = await createServerSupabaseClient();
   try {
     // Check if the route is specifically for reminders
     const pathname = request.nextUrl.pathname;
@@ -295,15 +301,19 @@ export async function POST(
        return NextResponse.json({ error: 'Method Not Allowed or Invalid Endpoint' }, { status: 405 });
      }
 
-
-    const { data: { session }, error: sessionError } = await (await supabase).auth.getSession();
-    if (sessionError) throw new Error(sessionError.message);
+    // Get session using Supabase client
+    const { data: { session }, error: sessionError } = await supabase.auth.getSession(); // Corrected: Removed extra await
+    if (sessionError) {
+        console.error('Error getting session:', sessionError);
+        return NextResponse.json({ error: 'Failed to retrieve session', details: sessionError.message }, { status: 500 });
+    }
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const paymentId = params.id;
      if (!paymentId) return NextResponse.json({ error: 'Payment ID is required' }, { status: 400 });
 
     // --- Check Permissions ---
+    // Pass the 'supabase' instance from the helper
     const permCheck = await checkPaymentPermissions(supabase, paymentId, session.user.id);
     if (!permCheck.allowed) {
         return NextResponse.json({ error: permCheck.error }, { status: permCheck.status });
@@ -325,7 +335,8 @@ export async function POST(
     }
 
     // "Send" reminder by updating the updatedAt timestamp
-    const { data: updatedPayment, error: updateError } = await (await supabase)
+    // Use the 'supabase' instance from the helper
+    const { data: updatedPayment, error: updateError } = await supabase // Corrected: Removed extra await
       .from('Payment')
       .update({ updatedAt: new Date().toISOString() }) // Just touch the timestamp
       .eq('id', paymentId)

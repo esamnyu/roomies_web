@@ -2,41 +2,32 @@
 import { NextRequest, NextResponse } from 'next/server';
 // Removed Prisma import
 // import { prisma } from '@/lib/prisma';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/app/api/auth/[...nextauth]/route';
-import { createServerClient, type CookieOptions } from '@supabase/ssr';
-import { cookies } from 'next/headers';
+// Removed NextAuth imports
+// import { getServerSession } from 'next-auth';
+// import { authOptions } from '@/app/api/auth/[...nextauth]/route';
+// Import the standardized Supabase client helper
+import { createServerSupabaseClient } from '@/lib/supabase-ssr'; // Adjust path if needed
 import { generateUUID } from '@/lib/utils'; // Assuming you have this
 
-
-// Helper function (same as above)
+// Removed local helper function - use imported createServerSupabaseClient instead
+/*
 async function createSupabaseRouteHandlerClient() {
-  const cookieStore = await cookies();
-  return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        get(name: string) {
-          return cookieStore.get(name)?.value;
-        },
-        set(name: string, value: string, options: CookieOptions) {
-          try { cookieStore.set({ name, value, ...options }); } catch (error) { console.error("Error setting cookie:", name, error); }
-        },
-        remove(name: string, options: CookieOptions) {
-          try { cookieStore.set({ name, value: '', ...options }); } catch (error) { console.error("Error removing cookie:", name, error); }
-        },
-      },
-    }
-  );
+  // ... implementation ...
 }
+*/
 
 // GET /api/payments - Get all payments for a user, with filters
 export async function GET(request: NextRequest) {
-  const supabase = await createSupabaseRouteHandlerClient();
+  // Use the imported standardized helper
+  const supabase = await createServerSupabaseClient();
   try {
+    // Get session using Supabase client
     const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-    if (sessionError) throw new Error(sessionError.message);
+    if (sessionError) {
+        console.error('Error getting session:', sessionError);
+        // Use descriptive error message
+        return NextResponse.json({ error: 'Failed to retrieve session', details: sessionError.message }, { status: 500 });
+    }
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const userId = session.user.id;
@@ -48,6 +39,7 @@ export async function GET(request: NextRequest) {
     const expenseId = searchParams.get('expenseId');
 
     // Start building the query for payments related to the current user
+    // Use the 'supabase' instance from the helper
     let query = supabase
       .from('Payment')
       .select(`
@@ -91,6 +83,7 @@ export async function GET(request: NextRequest) {
 
   } catch (error) {
     console.error('Error in GET /api/payments:', error);
+    // Ensure error handling catches potential issues from createServerSupabaseClient if it throws
     const message = error instanceof Error ? error.message : 'Failed to fetch payments';
     return NextResponse.json({ error: message }, { status: 500 });
   }
@@ -98,10 +91,15 @@ export async function GET(request: NextRequest) {
 
 // POST /api/payments - Create a new payment (e.g., manual settlement, though often handled during expense creation)
 export async function POST(request: NextRequest) {
-  const supabase = await createSupabaseRouteHandlerClient();
+  // Use the imported standardized helper
+  const supabase = await createServerSupabaseClient();
   try {
+    // Get session using Supabase client
     const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-    if (sessionError) throw new Error(sessionError.message);
+    if (sessionError) {
+        console.error('Error getting session:', sessionError);
+        return NextResponse.json({ error: 'Failed to retrieve session', details: sessionError.message }, { status: 500 });
+    }
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const currentUserId = session.user.id;
@@ -123,6 +121,7 @@ export async function POST(request: NextRequest) {
 
 
     // Check if the expense exists and get household info + creator
+    // Use the 'supabase' instance from the helper
     const { data: expense, error: expenseError } = await supabase
       .from('Expense')
       .select('id, creatorId, householdId')
@@ -134,6 +133,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Check if the current user is a member of the household
+    // Use the 'supabase' instance from the helper
      const { data: membership, error: membershipError } = await supabase
         .from('HouseholdUser')
         .select('userId, role')
@@ -160,6 +160,7 @@ export async function POST(request: NextRequest) {
 
 
     // Check if a payment already exists for this user and expense (optional but good practice)
+    // Use the 'supabase' instance from the helper
     const { data: existingPayment, error: checkError } = await supabase
       .from('Payment')
       .select('id')
@@ -181,6 +182,7 @@ export async function POST(request: NextRequest) {
     const now = new Date().toISOString();
     const paymentDate = status === 'COMPLETED' ? now : null;
 
+    // Use the 'supabase' instance from the helper
     const { data: newPayment, error: insertError } = await supabase
       .from('Payment')
       .insert({
@@ -212,6 +214,7 @@ export async function POST(request: NextRequest) {
 
   } catch (error) {
     console.error('Error in POST /api/payments:', error);
+     // Ensure error handling catches potential issues from createServerSupabaseClient if it throws
     const message = error instanceof Error ? error.message : 'Failed to create payment';
     return NextResponse.json({ error: message }, { status: 500 });
   }

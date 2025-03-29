@@ -1,39 +1,27 @@
 // src/app/api/tasks/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerClient, type CookieOptions } from '@supabase/ssr'; // Ensure CookieOptions is imported
-import { cookies } from 'next/headers';
+// Removed unused Supabase client creation imports from '@supabase/ssr' & 'next/headers'
+// import { createServerClient, type CookieOptions } from '@supabase/ssr';
+// import { cookies } from 'next/headers';
+// Import the standardized Supabase client helper
+import { createServerSupabaseClient } from '@/lib/supabase-ssr'; // Adjust path if needed (check for supbase-ssr vs supabase-ssr typo)
+import { type CookieOptions } from '@supabase/ssr'; // Keep CookieOptions if used by helper typing, though unlikely needed here directly
 import { generateUUID } from '@/lib/utils'; // Assuming you have this utility
 
-// --- Helper function to create client (or import if you centralize it) ---
-// Consider moving this to a shared lib file if used in many routes
+// Removed local helper function - use imported createServerSupabaseClient instead
+/*
 const createSupabaseClient = async () => {
-    // Removed 'async' as cookies() is not directly awaited here,
-    // but createServerClient handles the async nature internally
-    const cookieStore = await cookies();
-    return createServerClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-        {
-            cookies: {
-                get(name: string) { return cookieStore.get(name)?.value },
-                // Add try-catch for robustness, although might mask underlying issues
-                set(name: string, value: string, options: CookieOptions) {
-                   try { cookieStore.set({ name, value, ...options }); } catch (error) { console.error(`Failed to set cookie '${name}':`, error); }
-                 },
-                remove(name: string, options: CookieOptions) {
-                   try { cookieStore.set({ name, value: '', ...options }); } catch (error) { console.error(`Failed to remove cookie '${name}':`, error); }
-                 },
-            },
-        }
-    );
+    // ... implementation ...
 }
+*/
 
 
 // GET /api/tasks - Get all tasks for a household or a single task
 export async function GET(request: NextRequest) {
   console.log('[Tasks API] GET /api/tasks - Starting handler');
   try {
-    const supabase = await createSupabaseClient(); // Use helper
+    // Use the imported standardized helper
+    const supabase = await createServerSupabaseClient();
 
     // Use getUser() to check authentication
     console.log('[Tasks API] Getting authenticated user');
@@ -41,7 +29,6 @@ export async function GET(request: NextRequest) {
 
     if (userError) {
       console.error('[Tasks API] Auth getUser error:', userError);
-      // Don't expose detailed error messages unless necessary
       return NextResponse.json({ error: 'Authentication error' }, { status: 401 });
     }
     if (!user) {
@@ -52,7 +39,7 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = new URL(request.url);
     const householdId = searchParams.get('householdId');
-    const taskId = searchParams.get('taskId'); // Renamed from 'id' in original code to 'taskId' for clarity
+    const taskId = searchParams.get('taskId');
 
      if (!householdId && !taskId) {
         return NextResponse.json({ error: 'Either householdId or taskId query parameter is required' }, { status: 400 });
@@ -61,6 +48,7 @@ export async function GET(request: NextRequest) {
     // --- Fetch Single Task ---
     if (taskId) {
         console.log('[Tasks API] Fetching single task:', taskId);
+        // Use the 'supabase' instance from the helper
         const { data: task, error: taskError } = await supabase
           .from('Task')
           .select(`
@@ -69,7 +57,7 @@ export async function GET(request: NextRequest) {
             assignee:assigneeId(id, name, avatar)
           `)
           .eq('id', taskId)
-          .maybeSingle(); // Use maybeSingle to handle not found gracefully
+          .maybeSingle();
 
         if (taskError) {
           console.error('[Tasks API] Error fetching single task:', taskError);
@@ -81,12 +69,13 @@ export async function GET(request: NextRequest) {
         }
 
         // Add a check: Ensure the user belongs to the task's household
+        // Use the 'supabase' instance from the helper
          const { data: taskMembership, error: taskMembershipError } = await supabase
              .from('HouseholdUser')
-             .select('id') // Only need to check existence
+             .select('id')
              .eq('userId', user.id)
-             .eq('householdId', task.householdId) // Assuming task object has householdId
-             .limit(1) // Optimization
+             .eq('householdId', task.householdId)
+             .limit(1)
              .maybeSingle();
 
          if(taskMembershipError){
@@ -105,12 +94,13 @@ export async function GET(request: NextRequest) {
     // --- Fetch Tasks for Household ---
     if (householdId) {
       console.log('[Tasks API] Checking household membership for user', user.id, 'in household', householdId);
+      // Use the 'supabase' instance from the helper
       const { data: householdUser, error: membershipError } = await supabase
         .from('HouseholdUser')
-        .select('id, role') // Select role if needed later
+        .select('id, role')
         .eq('userId', user.id)
         .eq('householdId', householdId)
-        .maybeSingle(); // Use maybeSingle
+        .maybeSingle();
 
       if (membershipError) {
            console.error('[Tasks API] Membership check error:', membershipError);
@@ -124,6 +114,7 @@ export async function GET(request: NextRequest) {
 
        // Fetch tasks for household
        console.log('[Tasks API] Fetching tasks for household:', householdId);
+       // Use the 'supabase' instance from the helper
        const { data: tasks, error: tasksError } = await supabase
           .from('Task')
           .select(`
@@ -132,15 +123,15 @@ export async function GET(request: NextRequest) {
               assignee:assigneeId(id, name, email, avatar)
           `)
           .eq('householdId', householdId)
-          .order('priority', { ascending: false }) // Consider if priority is string or number for correct ordering
-          .order('dueDate', { ascending: true, nullsFirst: false }); // Keep tasks without due date last
+          .order('priority', { ascending: false })
+          .order('dueDate', { ascending: true, nullsFirst: false });
 
        if (tasksError) {
             console.error('[Tasks API] Error fetching tasks:', tasksError);
             return NextResponse.json({ error: 'Failed to fetch tasks', details: tasksError.message }, { status: 500 });
         }
        console.log('[Tasks API] Successfully fetched', tasks?.length || 0, 'tasks');
-       return NextResponse.json(tasks || []); // Return empty array if null
+       return NextResponse.json(tasks || []);
     }
 
     // This part should not be reachable if the initial check is correct, but added for safety
@@ -158,13 +149,18 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   console.log('[Tasks API] POST /api/tasks - Starting handler');
   try {
-    const supabase = await createSupabaseClient(); // Use helper
+    // Use the imported standardized helper
+    const supabase = await createServerSupabaseClient();
 
     // Use getUser()
     console.log('[Tasks API] Getting authenticated user');
     const { data: { user }, error: userError } = await supabase.auth.getUser();
 
-    if (userError) { return NextResponse.json({ error: 'Authentication error' }, { status: 401 }); }
+    // Add explicit error handling for getUser
+    if (userError) {
+        console.error('[Tasks API] Auth getUser error:', userError);
+        return NextResponse.json({ error: 'Authentication error', details: userError.message }, { status: 401 });
+    }
     if (!user) { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }); }
     console.log('[Tasks API] User authenticated as:', user.id);
 
@@ -189,12 +185,13 @@ export async function POST(request: NextRequest) {
 
     // Check membership using user.id
     console.log('[Tasks API] Checking household membership for user', user.id);
+    // Use the 'supabase' instance from the helper
     const { data: householdUser, error: membershipError } = await supabase
         .from('HouseholdUser')
         .select('id, role')
         .eq('userId', user.id)
         .eq('householdId', householdId)
-        .maybeSingle(); // Use maybeSingle
+        .maybeSingle();
 
     if (membershipError) { return NextResponse.json({ error: 'Error verifying household membership', details: membershipError.message }, { status: 500 });}
     if (!householdUser) { return NextResponse.json({ error: 'You are not a member of this household' }, { status: 403 }); }
@@ -203,26 +200,27 @@ export async function POST(request: NextRequest) {
 
     const taskId = generateUUID();
     const now = new Date().toISOString();
-    const formattedDueDate = dueDate ? new Date(dueDate).toISOString() : null; // Ensure date is valid or null
+    const formattedDueDate = dueDate ? new Date(dueDate).toISOString() : null;
 
     // Prepare task data for insertion
     const taskData = {
          id: taskId,
          title,
-         description: description || null, // Ensure null if empty/undefined
+         description: description || null,
          status: status || 'PENDING',
          priority: priority || 'MEDIUM',
-         creatorId: user.id, // Use user.id here
-         assigneeId: assigneeId || null, // Ensure null if empty/undefined
+         creatorId: user.id,
+         assigneeId: assigneeId || null,
          dueDate: formattedDueDate,
-         recurring: !!recurring, // Ensure boolean
-         recurrenceRule: recurrenceRule || null, // Ensure null if empty/undefined
+         recurring: !!recurring,
+         recurrenceRule: recurrenceRule || null,
          householdId,
          createdAt: now,
          updatedAt: now,
-         completedAt: status === 'COMPLETED' ? now : null // Set completedAt if created as completed
+         completedAt: status === 'COMPLETED' ? now : null
     };
 
+    // Use the 'supabase' instance from the helper
      const { data: newTask, error: createError } = await supabase
         .from('Task')
         .insert(taskData)
@@ -238,7 +236,6 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'Failed to create task', details: createError.message }, { status: 500 });
      }
     if (!newTask) {
-        // Should not happen if insert is successful, but check
         console.error('[Tasks API] Task creation did not return data.');
         return NextResponse.json({ error: 'Failed to create task' }, { status: 500 });
     }
@@ -257,27 +254,34 @@ export async function POST(request: NextRequest) {
 export async function PATCH(request: NextRequest) {
    console.log('[Tasks API] PATCH /api/tasks - Starting handler');
    try {
-      const supabase = await createSupabaseClient(); // Use helper
+      // Use the imported standardized helper
+      const supabase = await createServerSupabaseClient();
 
       // Use getUser()
       console.log('[Tasks API] Getting authenticated user');
       const { data: { user }, error: userError } = await supabase.auth.getUser();
-      if (userError || !user) { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });}
+      // Add explicit error handling for getUser
+      if (userError) {
+            console.error('[Tasks API] Auth getUser error:', userError);
+            return NextResponse.json({ error: 'Authentication error', details: userError.message }, { status: 401 });
+      }
+      if (!user) { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });}
       console.log('[Tasks API] User authenticated as:', user.id);
 
       const { searchParams } = new URL(request.url);
-      const taskId = searchParams.get('taskId'); // Use 'taskId' for consistency
+      const taskId = searchParams.get('taskId');
       if (!taskId) { return NextResponse.json({ error: 'Task ID query parameter is required' }, { status: 400 });}
 
       let data;
       try { data = await request.json(); } catch (e) { return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });}
 
       // Verify task exists and get householdId and creatorId
+      // Use the 'supabase' instance from the helper
       const { data: existingTask, error: taskFetchError } = await supabase
           .from('Task')
-          .select('id, creatorId, householdId, assigneeId') // Select assigneeId if needed for permissions
+          .select('id, creatorId, householdId, assigneeId')
           .eq('id', taskId)
-          .maybeSingle(); // Use maybeSingle
+          .maybeSingle();
 
       if (taskFetchError) {
             console.error('[Tasks API] Error fetching task for update:', taskFetchError);
@@ -286,12 +290,13 @@ export async function PATCH(request: NextRequest) {
       if (!existingTask) { return NextResponse.json({ error: 'Task not found' }, { status: 404 });}
 
       // Check membership using user.id
+      // Use the 'supabase' instance from the helper
        const { data: membership, error: membershipError } = await supabase
           .from('HouseholdUser')
-          .select('userId, role') // Select role for admin check
+          .select('userId, role')
           .eq('userId', user.id)
           .eq('householdId', existingTask.householdId)
-          .maybeSingle(); // Use maybeSingle
+          .maybeSingle();
 
        if (membershipError) { return NextResponse.json({ error: 'Error verifying household membership', details: membershipError.message }, { status: 500 });}
        if (!membership) { return NextResponse.json({ error: 'You are not a member of this household' }, { status: 403 });}
@@ -302,8 +307,6 @@ export async function PATCH(request: NextRequest) {
       const isAdmin = membership.role === 'ADMIN';
       const isAssignee = existingTask.assigneeId === user.id;
 
-      // Define who can update - adjust policy as needed
-      // Example: Allow creator, admin, or assignee to update
       if (!isCreator && !isAdmin && !isAssignee) {
            console.log(`[Tasks API] Permission denied for user ${user.id} on task ${taskId}. IsCreator: ${isCreator}, IsAdmin: ${isAdmin}, IsAssignee: ${isAssignee}`);
            return NextResponse.json({ error: 'You do not have permission to update this task' }, { status: 403 });
@@ -320,11 +323,10 @@ export async function PATCH(request: NextRequest) {
           dueDate?: string | null;
           recurring?: boolean;
           recurrenceRule?: string | null;
-          completedAt?: string | null; // Explicitly include completedAt
+          completedAt?: string | null;
       } = {
           updatedAt: new Date().toISOString(),
-          // Start with null/undefined for potentially updated fields
-          completedAt: null
+          completedAt: null // Initialize completedAt
       };
 
       // Map optional fields from request body 'data'
@@ -332,38 +334,34 @@ export async function PATCH(request: NextRequest) {
       if (data.description !== undefined) updateData.description = data.description;
       if (data.status !== undefined) updateData.status = data.status;
       if (data.priority !== undefined) updateData.priority = data.priority;
-      // Allow unassigning by passing null/undefined for assigneeId
       if (data.assigneeId !== undefined) updateData.assigneeId = data.assigneeId;
       if (data.dueDate !== undefined) {
            updateData.dueDate = data.dueDate ? new Date(data.dueDate).toISOString() : null;
       }
-      if (data.recurring !== undefined) updateData.recurring = !!data.recurring; // Ensure boolean
+      if (data.recurring !== undefined) updateData.recurring = !!data.recurring;
       if (data.recurrenceRule !== undefined) updateData.recurrenceRule = data.recurrenceRule;
 
-
-       // Set completedAt based on status AFTER status is potentially updated
-       // Use updateData.status if status is part of the update, otherwise fetch existing status if needed
+       // Set completedAt based on status
+       // Use the 'supabase' instance from the helper
        const finalStatus = updateData.status !== undefined ? updateData.status : (await supabase.from('Task').select('status').eq('id', taskId).single()).data?.status;
 
        if (finalStatus === 'COMPLETED') {
-           // Only set completedAt if it's not already set or if the status is changing TO completed
+           // Use the 'supabase' instance from the helper
            const currentCompletedAt = (await supabase.from('Task').select('completedAt').eq('id', taskId).single()).data?.completedAt;
            if (!currentCompletedAt) {
                updateData.completedAt = new Date().toISOString();
            } else {
-               // If already completed, don't overwrite completedAt unless specifically intended
-               delete updateData.completedAt; // Remove from update payload if not changing
+               delete updateData.completedAt;
            }
        } else {
-            // Ensure completedAt is explicitly nullified if status is not COMPLETED
             updateData.completedAt = null;
        }
        // --- End corrected block ---
 
-
+      // Use the 'supabase' instance from the helper
        const { data: updatedTask, error: updateError } = await supabase
           .from('Task')
-          .update(updateData) // Pass the fully typed object
+          .update(updateData)
           .eq('id', taskId)
           .select(`
               *,
@@ -395,24 +393,31 @@ export async function PATCH(request: NextRequest) {
 export async function DELETE(request: NextRequest) {
    console.log('[Tasks API] DELETE /api/tasks - Starting handler');
    try {
-      const supabase = await createSupabaseClient(); // Use helper
+      // Use the imported standardized helper
+      const supabase = await createServerSupabaseClient();
 
       // Use getUser()
       console.log('[Tasks API] Getting authenticated user');
       const { data: { user }, error: userError } = await supabase.auth.getUser();
-      if (userError || !user) { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });}
+       // Add explicit error handling for getUser
+       if (userError) {
+            console.error('[Tasks API] Auth getUser error:', userError);
+            return NextResponse.json({ error: 'Authentication error', details: userError.message }, { status: 401 });
+       }
+      if (!user) { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });}
       console.log('[Tasks API] User authenticated as:', user.id);
 
       const { searchParams } = new URL(request.url);
-      const taskId = searchParams.get('taskId'); // Use 'taskId'
+      const taskId = searchParams.get('taskId');
       if (!taskId) { return NextResponse.json({ error: 'Task ID query parameter is required' }, { status: 400 });}
 
       // Verify task exists and get householdId and creatorId
+      // Use the 'supabase' instance from the helper
       const { data: existingTask, error: taskFetchError } = await supabase
           .from('Task')
           .select('id, creatorId, householdId')
           .eq('id', taskId)
-          .maybeSingle(); // Use maybeSingle
+          .maybeSingle();
 
        if (taskFetchError) {
             console.error('[Tasks API] Error fetching task for deletion:', taskFetchError);
@@ -421,12 +426,13 @@ export async function DELETE(request: NextRequest) {
       if (!existingTask) { return NextResponse.json({ error: 'Task not found' }, { status: 404 });}
 
       // Check membership using user.id
+      // Use the 'supabase' instance from the helper
       const { data: membership, error: membershipError } = await supabase
           .from('HouseholdUser')
-          .select('userId, role') // Select role for admin check
+          .select('userId, role')
           .eq('userId', user.id)
           .eq('householdId', existingTask.householdId)
-          .maybeSingle(); // Use maybeSingle
+          .maybeSingle();
 
       if (membershipError) { return NextResponse.json({ error: 'Error verifying household membership', details: membershipError.message }, { status: 500 });}
       if (!membership) { return NextResponse.json({ error: 'You are not a member of this household' }, { status: 403 });}
@@ -438,6 +444,7 @@ export async function DELETE(request: NextRequest) {
       if (!isCreator && !isAdmin) { return NextResponse.json({ error: 'You do not have permission to delete this task' }, { status: 403 }); }
 
       // Delete the task
+      // Use the 'supabase' instance from the helper
       const { error: deleteError } = await supabase
           .from('Task')
           .delete()

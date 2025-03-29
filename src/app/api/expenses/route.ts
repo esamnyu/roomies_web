@@ -1,54 +1,35 @@
 // src/app/api/expenses/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerClient, type CookieOptions } from '@supabase/ssr';
-import { cookies } from 'next/headers';
+// Removed unused Supabase client creation imports from '@supabase/ssr' & 'next/headers'
+// import { createServerClient, type CookieOptions } from '@supabase/ssr';
+// import { cookies } from 'next/headers';
+// Import the standardized Supabase client helper
+import { createServerSupabaseClient } from '@/lib/supabase-ssr'; // Adjust path if needed (check for supbase-ssr vs supabase-ssr typo)
+import { createServerClient, type CookieOptions } from '@supabase/ssr'; // Keep CookieOptions if used by helper typing, though unlikely needed here directly
 import { generateUUID } from '@/lib/utils'; // Assuming you have this utility
 
-// Helper function to create Supabase client with improved error handling
+// Removed local helper function - use imported createServerSupabaseClient instead
+/*
 const createSupabaseClient = async () => {
-    try {
-        const cookieStore = await cookies();
-        const projectRef = process.env.NEXT_PUBLIC_SUPABASE_URL?.match(/https:\/\/([^.]+)/)?.[1];
-        const authCookie = cookieStore.get(`sb-${projectRef}-auth-token`);
-        console.log('[Expenses API] Auth cookie present (read directly):', !!authCookie);
-
-        return createServerClient(
-            process.env.NEXT_PUBLIC_SUPABASE_URL!,
-            process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-            {
-                cookies: {
-                    get(name: string) {
-                        const cookie = cookieStore.get(name);
-                        console.log(`[Expenses API] Getting cookie '${name}':`, !!cookie);
-                        return cookie?.value;
-                    },
-                    set(name: string, value: string, options: CookieOptions) {
-                        try { cookieStore.set({ name, value, ...options }); } catch (error) { console.error(`[Expenses API] Failed to set cookie '${name}':`, error); }
-                    },
-                    remove(name: string, options: CookieOptions) {
-                        try { cookieStore.set({ name, value: '', ...options }); } catch (error) { console.error(`[Expenses API] Failed to remove cookie '${name}':`, error); }
-                    },
-                },
-            }
-        );
-    } catch (error) {
-        console.error("[Expenses API] Failed to create Supabase client:", error);
-        throw error;
-    }
+    // ... implementation ...
 }
+*/
 
 // GET /api/expenses
 export async function GET(request: NextRequest) {
   console.log('[Expenses API] GET /api/expenses - Starting handler');
   let supabase;
   try {
-      supabase = await createSupabaseClient();
+      // Use the imported standardized helper
+      supabase = await createServerSupabaseClient();
   } catch (error) {
+      console.error("[Expenses API] Failed to create Supabase client:", error);
       return NextResponse.json({ error: 'Internal server error during client setup' }, { status: 500 });
   }
 
   try {
     console.log('[Expenses API] Attempting to get session...');
+    // Use the 'supabase' instance from the helper
     const { data: { session }, error: sessionError } = await supabase.auth.getSession();
 
     if (sessionError) {
@@ -66,16 +47,17 @@ export async function GET(request: NextRequest) {
 
     let userId: string | null = null;
 
-    // --- START: Admin Bypass Logic ---
+    // --- START: Admin Bypass Logic (Keep or remove based on production needs) ---
     if (!session) {
         console.error('[Expenses API] No session found - Attempting Admin Bypass');
-        // Create an admin client
-         const supabaseAdmin = createServerClient(
+        // Create an admin client (consider moving this logic to a helper if reused)
+         const supabaseAdmin = createServerClient( // Use createServerClient from @supabase/ssr directly
             process.env.NEXT_PUBLIC_SUPABASE_URL!,
             process.env.SUPABASE_SERVICE_ROLE_KEY!, // Use Service Role Key
             {
                 auth: { persistSession: false, autoRefreshToken: false },
-                cookies: { get: () => undefined, set: () => {}, remove: () => {} } // No cookie interaction needed for admin
+                // No cookie handlers needed for admin client relying purely on service key
+                cookies: { get: () => undefined, set: () => {}, remove: () => {} }
             }
         );
 
@@ -114,7 +96,7 @@ export async function GET(request: NextRequest) {
 
 
     // --- START: Regular Authenticated Flow ---
-    // Check if user is a member of the household using the REGULAR client
+    // Check if user is a member of the household using the REGULAR client from the helper
     console.log('[Expenses API] Checking household membership for user', userId);
     const { data: householdUser, error: membershipError } = await supabase
       .from('HouseholdUser')
@@ -134,7 +116,7 @@ export async function GET(request: NextRequest) {
     }
     console.log('[Expenses API] User membership verified.');
 
-    // Fetch expenses using the REGULAR client
+    // Fetch expenses using the REGULAR client from the helper
     console.log('[Expenses API] Fetching expenses for household', householdId, 'as user', userId);
     const { data: expenses, error: expensesError } = await supabase
       .from('Expense')
@@ -171,11 +153,19 @@ export async function GET(request: NextRequest) {
 
 // POST /api/expenses
 export async function POST(request: NextRequest) {
-  const supabase = await createSupabaseClient();
+  // Use the imported standardized helper
+  const supabase = await createServerSupabaseClient();
   try {
+    // Use the 'supabase' instance from the helper
     const { data: { session }, error: sessionError } = await supabase.auth.getSession();
 
-    if (sessionError) throw new Error(sessionError.message);
+    // Add explicit error handling for session retrieval
+    if (sessionError) {
+        console.error('[Expenses API] Session error:', sessionError);
+        // Use descriptive error message
+        const message = sessionError.message || 'Failed to retrieve session.';
+        return NextResponse.json({ error: message }, { status: 500 });
+    }
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
@@ -204,7 +194,7 @@ export async function POST(request: NextRequest) {
      }
 
 
-    // Check if user is a member of the household using Supabase
+    // Check if user is a member of the household using the 'supabase' instance from the helper
     const { data: householdUser, error: membershipError } = await supabase
       .from('HouseholdUser')
       .select('userId')
@@ -222,6 +212,7 @@ export async function POST(request: NextRequest) {
     }
 
     // --- Transaction Start (Conceptual - Use Supabase Function for real transaction) ---
+    // Use the 'supabase' instance from the helper for all operations below
     // 1. Create the Expense
     const expenseId = generateUUID(); // Generate ID beforehand
     const now = new Date().toISOString();
@@ -345,6 +336,7 @@ export async function POST(request: NextRequest) {
 
   } catch (error) {
     console.error('Error in POST /api/expenses:', error);
+     // Ensure error handling catches potential issues from createServerSupabaseClient if it throws
     const message = error instanceof Error ? error.message : 'Failed to create expense';
     return NextResponse.json({ error: message }, { status: 500 });
   }

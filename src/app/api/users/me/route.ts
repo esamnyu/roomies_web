@@ -2,41 +2,43 @@
 import { NextRequest, NextResponse } from 'next/server';
 // Removed Prisma import
 // import { prisma } from '@/lib/prisma';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/app/api/auth/[...nextauth]/route'; // Ensure path is correct
-import { createServerClient, type CookieOptions } from '@supabase/ssr';
-import { cookies } from 'next/headers';
-// Import the admin client for Supabase Auth user deletion
+// Removed NextAuth imports
+// import { getServerSession } from 'next-auth';
+// import { authOptions } from '@/app/api/auth/[...nextauth]/route';
+// Import the standardized Supabase client helper
+import { createServerSupabaseClient } from '@/lib/supabase-ssr'; // Using 'supbase' based on context file list
+import { type CookieOptions } from '@supabase/ssr'; // Import CookieOptions if not already global/implied
+// Import the admin client specifically for Supabase Auth user deletion
 import { supabase as supabaseAdmin } from '@/lib/supabase'; // Assuming this is the admin client
 
-// Helper function (ensure cookies() is correctly imported and used)
+// Removed local helper function - use imported createServerSupabaseClient instead
+/*
 const createSupabaseRouteHandlerClient = async () => {
-  const cookieStore = await cookies(); // Correct usage inside function scope
-  return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        get(name: string) { return cookieStore.get(name)?.value; },
-        set(name: string, value: string, options: CookieOptions) { try { cookieStore.set({ name, value, ...options }); } catch (error) { console.error("Error setting cookie:", name, error); } },
-        remove(name: string, options: CookieOptions) { try { cookieStore.set({ name, value: '', ...options }); } catch (error) { console.error("Error removing cookie:", name, error); } },
-      },
-    }
-  );
+  // ... implementation ...
 }
+*/
 
 // GET /api/users/me - Get current user's details
 export async function GET(request: NextRequest) {
-  const supabase = await createSupabaseRouteHandlerClient(); // Use non-async call
+  // Use the imported standardized helper
+  const supabase = await createServerSupabaseClient();
   try {
     // Use supabase client created by helper
     const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-    if (sessionError) throw new Error(sessionError.message);
+
+    // Add error handling for session retrieval
+    if (sessionError) {
+        console.error('Error getting session:', sessionError);
+        // Use a more specific error message if possible
+        const message = sessionError.message || 'Failed to retrieve session.';
+        return NextResponse.json({ error: message }, { status: 500 });
+    }
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const userId = session.user.id;
 
     // 1. Get the user's core details
+    // Use the 'supabase' instance from the helper
     const { data: user, error: userError } = await supabase
       .from('User')
       .select('id, name, email, avatar, createdAt') // Select columns from your User table
@@ -53,6 +55,7 @@ export async function GET(request: NextRequest) {
 
 
     // 2. Get household memberships with household details
+    // Use the 'supabase' instance from the helper
     const { data: memberships, error: membershipsError } = await supabase
         .from('HouseholdUser')
         .select(`
@@ -69,12 +72,14 @@ export async function GET(request: NextRequest) {
      }
 
      // 3. Get counts (examples - adjust fields/tables as needed for MVP)
+     // Use the 'supabase' instance from the helper
      const { count: paymentCount, error: paymentCountError } = await supabase
         .from('Payment')
         .select('*', { count: 'exact', head: true })
         .eq('userId', userId);
      if(paymentCountError) console.error("Error counting payments:", paymentCountError);
 
+      // Use the 'supabase' instance from the helper
       const { count: expenseCreatedCount, error: expenseCountError } = await supabase
         .from('Expense')
         .select('*', { count: 'exact', head: true })
@@ -102,21 +107,26 @@ export async function GET(request: NextRequest) {
       // settings: { ... },
       statistics: {
         // Use actual counts, default to 0 if error or null
-        paymentsMadeOrReceived: paymentCount ?? 0, // Assuming this counts payments where user is 'userId'
+        paymentsMadeOrReceived: paymentCount ?? 0,
         expensesCreated: expenseCreatedCount ?? 0,
         // tasksAssigned: tasksAssignedCount ?? 0, // Include if fetched
-        // Add other relevant counts here
       },
       // Map memberships, handle potential null from error
-      households: (memberships || []).map(m => ({
-        // Ensure 'household' object is not null before accessing its properties
-        id: m.household?.id,
-        name: m.household?.name,
-        address: m.household?.address,
-        createdAt: m.household?.createdAt,
-        joinedAt: m.joinedAt,
-        role: m.role,
-      })).filter(h => h.id), // Filter out any potential null households if join failed
+      // *** MODIFICATION START: Handle 'household' potentially inferred as array ***
+      households: (memberships || []).map((m: any) => { // Use 'any' here or a type where household is T[]
+          // Safely access the first element if TS thinks 'household' is an array
+          const hh = Array.isArray(m.household) ? m.household[0] : m.household;
+          // If it's guaranteed to be an object (as !inner suggests), simpler: const hh = m.household;
+          return {
+              id: hh?.id,
+              name: hh?.name,
+              address: hh?.address,
+              createdAt: hh?.createdAt,
+              joinedAt: m.joinedAt,
+              role: m.role,
+          };
+      }).filter((h: { id?: string }) => h.id), // Filter out entries without a valid household ID
+      // *** MODIFICATION END ***
     };
 
     return NextResponse.json(userData);
@@ -134,17 +144,25 @@ export async function DELETE(request: NextRequest) {
   // ** Related data (Expenses, Tasks etc.) WILL BE ORPHANED.              **
   // ** Use a Supabase Database Function for production account deletion.   **
   // **************************************************************************
-  const supabase = await createSupabaseRouteHandlerClient(); // Use non-async call
+  // Use the imported standardized helper for session checking and public table access
+  const supabase = await createServerSupabaseClient();
   try {
-    // Use supabase client created by helper
+    // Use supabase client created by helper to get session
     const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-    if (sessionError) throw new Error(sessionError.message);
+
+     // Add error handling for session retrieval
+    if (sessionError) {
+        console.error('Error getting session:', sessionError);
+        const message = sessionError.message || 'Failed to retrieve session.';
+        return NextResponse.json({ error: message }, { status: 500 });
+    }
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const userId = session.user.id;
     console.warn(`Executing MVP DELETE for user ${userId}. Data orphaning will occur. Use a DB function for production.`);
 
     // --- Sole Admin Check ---
+    // Use the 'supabase' instance from the helper
     // 1. Get households where the user is ADMIN
     const { data: adminMemberships, error: adminCheckError } = await supabase
         .from('HouseholdUser')
@@ -168,11 +186,19 @@ export async function DELETE(request: NextRequest) {
                 console.warn(`Membership record found for user ${userId} but household data is missing.`);
                 continue;
             }
+            // Handle case where household might be inferred as array
+            const hh = Array.isArray(household) ? household[0] : household;
+            if (!hh) {
+                console.warn(`Membership record found for user ${userId} but household data is missing or empty array.`);
+                continue;
+            }
+
             const householdId = membership.householdId;
-            const householdName = household.name; // Use the intermediate variable
+            const householdName = hh.name; // Use the potentially extracted object
             // --- End Fix ---
 
             // Count total members in this household
+            // Use the 'supabase' instance from the helper
              const { count: totalMemberCount, error: totalCountErr } = await supabase
                 .from('HouseholdUser')
                 .select('*', { count: 'exact', head: true })
@@ -187,6 +213,7 @@ export async function DELETE(request: NextRequest) {
              // If household has more than one member (the user being deleted)
              if (totalMemberCount > 1) {
                  // Count *other* admins in this household
+                 // Use the 'supabase' instance from the helper
                  const { count: otherAdminCount, error: otherAdminErr } = await supabase
                     .from('HouseholdUser')
                     .select('*', { count: 'exact', head: true })
@@ -222,6 +249,7 @@ export async function DELETE(request: NextRequest) {
     // --- MVP Deletion Steps (Non-Transactional, Incomplete Cleanup) ---
 
     // 1. Delete HouseholdUser memberships
+    // Use the 'supabase' instance from the helper
     console.warn(`Deleting HouseholdUser records for user ${userId}.`);
     const { error: deleteMembershipsError } = await supabase
         .from('HouseholdUser')
@@ -234,16 +262,10 @@ export async function DELETE(request: NextRequest) {
 
     // 2. **SKIPPING Deletion of related data (Expenses, Payments, Tasks etc.) for MVP**
     console.warn(`SKIPPING deletion of Expenses, Payments, Tasks etc. for user ${userId}. Data will be orphaned.`);
-    // For Production: Add calls here (within a DB function) to delete/handle:
-    // - Payments where userId = user.id
-    // - ExpenseSplits where userId = user.id
-    // - Expenses where creatorId = user.id (or reassign?)
-    // - Tasks where creatorId or assigneeId = user.id (delete/unassign?)
-    // - Messages where senderId = user.id
-    // - Invitations sent by or to the user
-    // - Any other user-related data
+    // For Production: Add calls here (within a DB function) to delete/handle related data
 
     // 3. Delete the user from the 'User' table
+    // Use the 'supabase' instance from the helper
     console.warn(`Deleting user record from User table for ${userId}.`);
     const { error: deleteUserTableError } = await supabase
         .from('User')
@@ -257,11 +279,9 @@ export async function DELETE(request: NextRequest) {
 
     // 4. Delete the user from Supabase Auth (Requires Admin Client)
     console.warn(`Deleting user from Supabase Auth for ${userId}. Requires Admin privileges.`);
-    // Ensure supabaseAdmin is correctly initialized with the service role key
-    // Add a check to ensure supabaseAdmin is available
+    // Use the imported 'supabaseAdmin' client here
     if (!supabaseAdmin || typeof supabaseAdmin.auth?.admin?.deleteUser !== 'function') {
         console.error("CRITICAL: Supabase Admin Client (supabaseAdmin) is not configured or available. Cannot delete Auth user.");
-        // Optionally revert the User table deletion if possible (difficult without transaction)
         return NextResponse.json({ error: 'User data deleted, but Admin client not configured to delete authentication record. Requires manual cleanup.' }, { status: 500 });
     }
 
@@ -269,8 +289,6 @@ export async function DELETE(request: NextRequest) {
 
     if (deleteAuthUserError) {
         console.error("CRITICAL: Error deleting user from Supabase Auth:", deleteAuthUserError);
-        // The user record in your 'User' table might be deleted, but the auth user still exists.
-        // This requires manual cleanup in Supabase dashboard.
         return NextResponse.json({ error: 'User data deleted, but failed to delete authentication record. Requires manual cleanup.' }, { status: 500 });
     }
 
@@ -283,6 +301,7 @@ export async function DELETE(request: NextRequest) {
 
   } catch (error) {
     console.error('Error in DELETE /api/users/me:', error);
+    // Ensure error handling catches potential issues from createServerSupabaseClient if it throws
     const message = error instanceof Error ? error.message : 'Failed to delete account';
     return NextResponse.json({ error: message }, { status: 500 });
   }
