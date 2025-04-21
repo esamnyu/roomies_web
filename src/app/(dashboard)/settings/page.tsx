@@ -2,12 +2,15 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useSession } from 'next-auth/react';
+import { useAuth } from '@/context/AuthContext'; // Import your custom hook
 import { useRouter } from 'next/navigation';
 import Card from '@/components/ui/Card';
 
 export default function SettingsPage() {
-  const { data: session, status } = useSession();
+  // const { data: session, status } = useSession();
+  // Replacement using useAuth
+  const { user, isLoading, session: supabaseSession } = useAuth(); // Use your hook, rename session if needed
+  const status = isLoading ? 'loading' : user ? 'authenticated' : 'unauthenticated'; // Derive status if needed
   const router = useRouter();
   
   // Theme settings
@@ -159,8 +162,8 @@ export default function SettingsPage() {
       // For demo purposes, create a dummy JSON
       const userData = {
         profile: {
-          name: session?.user?.name,
-          email: session?.user?.email,
+          name: user?.name,
+          email: user?.email,
         },
         settings: {
           theme,
@@ -186,7 +189,7 @@ export default function SettingsPage() {
     }
   };
   
-  if (status === 'loading') {
+  if (isLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>

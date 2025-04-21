@@ -2,7 +2,7 @@
 'use client';
 
 import { ReactNode } from 'react';
-import { SessionProvider } from "next-auth/react";
+import { SessionProvider } from "next-auth/react"; // <--- Make sure this import exists
 import { AuthProvider } from '@/context/AuthContext';
 
 interface ProvidersProps {
@@ -11,8 +11,11 @@ interface ProvidersProps {
 
 export default function Providers({ children }: ProvidersProps) {
   return (
+    // SessionProvider MUST wrap components using useSession
     <SessionProvider>
-      {children}
+      <AuthProvider>
+        {children}
+      </AuthProvider>
     </SessionProvider>
   );
 }

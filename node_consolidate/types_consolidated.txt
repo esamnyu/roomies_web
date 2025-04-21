@@ -1,0 +1,129 @@
+// Consolidated 3 files from the "types" folder
+// This file contains all code files within the "types" folder and its subfolders.
+
+// Directory: types, File: expense.ts
+// File Type: ts
+```typescript
+// src/types/expense.ts
+export interface Member {
+    id: string;
+    name: string;
+    avatar?: string;
+  }
+  
+  export interface Payment {
+    id: string;
+    userId: string;
+    userName: string;
+    amount: number;
+    status: 'PENDING' | 'COMPLETED' | 'DECLINED';
+    expenseId: string;
+  }
+  
+  export interface Split {
+    id?: string;
+    userId: string;
+    userName: string;
+    amount: number;
+    expenseId?: string;
+  }
+  
+  export interface Expense {
+    id?: string;
+    title: string;
+    amount: number;
+    date: Date;
+    creatorId: string;
+    creatorName: string;
+    description?: string;
+    splitType: 'EQUAL' | 'PERCENTAGE' | 'CUSTOM';
+    householdId: string;
+    splits: Split[];
+    payments: Payment[];
+  }
+  
+  export interface ExpenseFormProps {
+    expense: Expense | null;
+    members: Member[];
+    onSubmit: (expense: Expense) => void | Promise<void>; // Allow both sync and async
+    onCancel: () => void;
+    householdId: string;
+  }
+```
+
+// Directory: types, File: index.ts
+// File Type: ts
+```typescript
+// types/index.ts
+
+export interface Member {
+    id: string;
+    name: string;
+    avatar?: string;
+  }
+  
+  export interface Payment {
+    id: string;
+    userId: string;
+    userName: string;
+    amount: number;
+    status: 'PENDING' | 'COMPLETED' | 'DECLINED';
+    expenseId: string;
+  }
+  
+  export interface Split {
+    id?: string;
+    userId: string;
+    userName: string;
+    amount: number;
+    expenseId?: string;
+  }
+  
+  export interface Expense {
+    id?: string;
+    title: string;
+    amount: number;
+    date: Date | string; // Allow string for API interactions
+    creatorId: string;
+    creatorName: string;
+    description?: string;
+    splitType: 'EQUAL' | 'PERCENTAGE' | 'CUSTOM';
+    householdId: string;
+    splits: Split[];
+    payments: Payment[];
+  }
+  
+  export interface Balance {
+    userId: string;
+    userName: string;
+    owes: number;
+    isOwed: number;
+    net: number;
+  }
+```
+
+// Directory: types, File: task.ts
+// File Type: ts
+```typescript
+// src/types/task.ts
+export interface Task {
+    id: string; // Required for existing tasks
+    title: string;
+    description?: string;
+    status: 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'SKIPPED';
+    priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
+    creatorId: string;
+    creatorName?: string;
+    assigneeId?: string;
+    assigneeName?: string;
+    dueDate?: Date | string;
+    recurring: boolean;
+    recurrenceRule?: string;
+    householdId: string;
+    completedAt?: Date;
+  }
+  
+  // For creating new tasks without IDs
+  export type NewTask = Omit<Task, 'id'> & { id?: string };
+```
+
