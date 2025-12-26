@@ -11,7 +11,7 @@ interface Member {
   avatar: string;
   role: 'ADMIN' | 'MEMBER' | 'GUEST';
   status: 'ONLINE' | 'AWAY' | 'OFFLINE';
-  joinedAt: string;
+  joined_at: string;
   owes?: number;
   isOwed?: number;
   tasksCompleted?: number;
@@ -235,7 +235,7 @@ export default function MemberGrid({ householdId, onInvite }: MemberGridProps) {
                           {member.role.charAt(0) + member.role.slice(1).toLowerCase()}
                         </span>
                         <span className="text-xs text-gray-500 dark:text-gray-400 ml-2">
-                          Joined {new Date(member.joinedAt).toLocaleDateString()}
+                          Joined {new Date(member.joined_at).toLocaleDateString()}
                         </span>
                       </div>
                     </div>

@@ -203,7 +203,7 @@ useEffect(() => {
       // Step 1: Check if the user exists in the User table by ID
       console.log('Checking if user exists in User table by ID');
       const { data: userDataById, error: userIdError } = await supabaseClient
-        .from('User')
+        .from('profiles')
         .select('id, email')
         .eq('id', session.user.id)
         .single();
@@ -214,7 +214,7 @@ useEffect(() => {
         
         // Check if user exists with the same email
         const { data: userDataByEmail, error: emailError } = await supabaseClient
-          .from('User')
+          .from('profiles')
           .select('id, email')
           .eq('email', session.user.email)
           .maybeSingle();
@@ -224,7 +224,7 @@ useEffect(() => {
           console.log('Found user with same email but different ID. Updating ID...');
           
           const { error: updateError } = await supabaseClient
-            .from('User')
+            .from('profiles')
             .update({ id: session.user.id })
             .eq('email', session.user.email);
           
@@ -241,15 +241,15 @@ useEffect(() => {
           try {
             // Create a user record
             const { data: newUser, error: createUserError } = await supabaseClient
-              .from('User')
+              .from('profiles')
               .insert([
                 {
                   id: session.user.id,
                   email: session.user.email,
                   name: session.user.user_metadata?.name || session.user.email?.split('@')[0] || 'User',
                   password: 'MANAGED_BY_SUPABASE_AUTH',
-                  createdAt: new Date().toISOString(),
-                  updatedAt: new Date().toISOString()
+                  created_at: new Date().toISOString(),
+                  updated_at: new Date().toISOString()
                 }
               ])
               .select('id')
@@ -267,15 +267,15 @@ useEffect(() => {
                 const modifiedEmail = `${session.user.email?.split('@')[0]}_${randomSuffix}@${session.user.email?.split('@')[1]}`;
                 
                 const { data: newUserRetry, error: retryError } = await supabaseClient
-                  .from('User')
+                  .from('profiles')
                   .insert([
                     {
                       id: session.user.id,
                       email: modifiedEmail, // Use modified email to avoid unique constraint
                       name: session.user.user_metadata?.name || session.user.email?.split('@')[0] || 'User',
                       password: 'MANAGED_BY_SUPABASE_AUTH',
-                      createdAt: new Date().toISOString(),
-                      updatedAt: new Date().toISOString()
+                      created_at: new Date().toISOString(),
+                      updated_at: new Date().toISOString()
                     }
                   ])
                   .select('id')
@@ -307,16 +307,16 @@ useEffect(() => {
       // Step 4: Get user's household
       console.log('Fetching user household data...');
       const { data: householdUser, error: householdError } = await supabaseClient
-        .from('HouseholdUser')
-        .select('householdId')
-        .eq('userId', session.user.id)
-        .order('joinedAt', { ascending: false })
+        .from('household_members')
+        .select('household_id')
+        .eq('user_id', session.user.id)
+        .order('joined_at', { ascending: false })
         .limit(1)
         .single();
       
       if (!householdError && householdUser) {
-        console.log('Found household ID:', householdUser.householdId);
-        setHouseholdId(householdUser.householdId);
+        console.log('Found household ID:', householdUser.household_id);
+        setHouseholdId(householdUser.household_id);
       } else {
         console.log('User has no households or error fetching household:', householdError?.message);
         console.log('Error details:', householdError);
@@ -331,14 +331,14 @@ useEffect(() => {
           
           // 1. Create a new household with explicit UUID
           const { data: newHousehold, error: createError } = await supabaseClient
-            .from('Household')
+            .from('households')
             .insert([
               {
                 id: householdUUID,
                 name: 'Test Household',
                 address: 'Test Address',
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString()
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
               }
             ])
             .select('id')
@@ -352,14 +352,14 @@ useEffect(() => {
             // 2. Associate the user with the new household
             const householdUserUUID = generateUUID(); // Generate a UUID for the HouseholdUser
             const { data: newMembership, error: memberError } = await supabaseClient
-              .from('HouseholdUser')
+              .from('household_members')
               .insert([
                 {
                   id: householdUserUUID,
                   userId: session.user.id,
                   householdId: newHousehold.id,
                   role: 'ADMIN',
-                  joinedAt: new Date().toISOString()
+                  joined_at: new Date().toISOString()
                 }
               ])
               .select()

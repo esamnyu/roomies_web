@@ -70,7 +70,7 @@ export function validateInvitationData(data: any) {
  */
 export async function getInvitationByToken(supabase: any, token: string) {
   const { data: invitation, error } = await supabase
-    .from('Invitation')
+    .from('invitations')
     .select(`
       id, 
       email, 
@@ -107,10 +107,10 @@ export async function checkInvitationExpiration(supabase: any, invitation: any) 
   if (expiry < now) {
     // Auto-update status to EXPIRED
     await supabase
-      .from('Invitation')
+      .from('invitations')
       .update({ 
         status: 'EXPIRED', 
-        updatedAt: now.toISOString()
+        updated_at: now.toISOString()
       })
       .eq('id', invitation.id);
       
@@ -130,11 +130,11 @@ export async function checkInvitationExpiration(supabase: any, invitation: any) 
  */
 export async function checkExistingInvitation(supabase: any, email: string, householdId: string) {
   const { data: existingInvitation, error } = await supabase
-    .from('Invitation')
+    .from('invitations')
     .select('id, status')
     .eq('email', email)
-    .eq('householdId', householdId)
-    .eq('status', 'PENDING')
+    .eq('household_id', householdId)
+    .eq('status', 'pending')
     .maybeSingle();
   
   if (existingInvitation) {
@@ -153,17 +153,17 @@ export async function checkExistingInvitation(supabase: any, email: string, hous
 export async function checkExistingMembership(supabase: any, email: string, householdId: string) {
   try {
     const { data: existingUser, error: userError } = await supabase
-      .from('User')
+      .from('profiles')
       .select('id')
       .eq('email', email)
       .single();
     
     if (existingUser) {
       const { data: householdUser } = await supabase
-        .from('HouseholdUser')
+        .from('household_members')
         .select('id')
-        .eq('userId', existingUser.id)
-        .eq('householdId', householdId)
+        .eq('user_id', existingUser.id)
+        .eq('household_id', householdId)
         .maybeSingle();
       
       if (householdUser) {
@@ -218,7 +218,7 @@ export async function createInvitation(
   
   // Create the invitation record
   const { data: invitation, error: inviteError } = await supabase
-    .from('Invitation')
+    .from('invitations')
     .insert([
       {
         id: inviteId,
@@ -229,9 +229,9 @@ export async function createInvitation(
         status: 'PENDING',
         message: message || null,
         token,
-        expiresAt: expiresAt.toISOString(),
-        createdAt: now.toISOString(),
-        updatedAt: now.toISOString()
+        expires_at: expiresAt.toISOString(),
+        created_at: now.toISOString(),
+        updated_at: now.toISOString()
       }
     ])
     .select('id, email, householdId, role, status, expiresAt, createdAt')
@@ -248,7 +248,7 @@ export async function createInvitation(
   
   // Get household information for the email
   const { data: household } = await supabase
-    .from('Household')
+    .from('households')
     .select('name')
     .eq('id', householdId)
     .single();
@@ -292,10 +292,10 @@ export async function addUserToHousehold(
   ) {
     // Check if the user is already a member
     const { data: existingMembership } = await supabase
-      .from('HouseholdUser')
+      .from('household_members')
       .select('id, role')
-      .eq('userId', userId)
-      .eq('householdId', householdId)
+      .eq('user_id', userId)
+      .eq('household_id', householdId)
       .maybeSingle();
     
     if (existingMembership) {
@@ -310,14 +310,14 @@ export async function addUserToHousehold(
     const membershipId = generateUUID();
     
     const { error: addError } = await supabase
-      .from('HouseholdUser')
+      .from('household_members')
       .insert([
         {
           id: membershipId,
           userId,
           householdId,
           role,
-          joinedAt: new Date().toISOString()
+          joined_at: new Date().toISOString()
         }
       ]);
     
@@ -330,7 +330,7 @@ export async function addUserToHousehold(
       userId,
       householdId,
       role,
-      joinedAt: new Date().toISOString()
+      joined_at: new Date().toISOString()
     };
   }
 
@@ -345,7 +345,7 @@ export async function updateInvitationStatus(
 ) {
   // Get the invitation
   const { data: invitation, error: fetchError } = await supabase
-    .from('Invitation')
+    .from('invitations')
     .select('*')
     .eq('id', invitationId)
     .single();
@@ -373,11 +373,11 @@ export async function updateInvitationStatus(
   
   // Update the invitation status
   const { data: updatedInvitation, error: updateError } = await supabase
-    .from('Invitation')
+    .from('invitations')
     .update({ 
       status, 
-      updatedAt: new Date().toISOString(),
-      respondedAt: new Date().toISOString()
+      updated_at: new Date().toISOString(),
+      responded_at: new Date().toISOString()
     })
     .eq('id', invitationId)
     .select()
@@ -416,7 +416,7 @@ export async function acceptInvitationByToken(
   
   // Find or create user record
   const { data: existingUser, error: userError } = await supabase
-    .from('User')
+    .from('profiles')
     .select('id')
     .eq('email', userEmail)
     .single();
@@ -425,15 +425,15 @@ export async function acceptInvitationByToken(
   if (userError || !existingUser) {
     // Create a new user if not found
     const { data: newUser, error: createError } = await supabase
-      .from('User')
+      .from('profiles')
       .insert([
         {
           id: user.id,
           email: userEmail,
           name: user.name || userEmail?.split('@')[0] || 'User',
           password: 'MANAGED_BY_SUPABASE_AUTH',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
         }
       ])
       .select('id')
@@ -450,10 +450,10 @@ export async function acceptInvitationByToken(
   
   // Try to get any existing household membership
   const { data: existingMembership } = await supabase
-    .from('HouseholdUser')
+    .from('household_members')
     .select('id, role')
-    .eq('userId', userDbId)
-    .eq('householdId', invitation.householdId)
+    .eq('user_id', userDbId)
+    .eq('household_id', invitation.householdId)
     .maybeSingle();
   
   const now = new Date();
@@ -461,11 +461,11 @@ export async function acceptInvitationByToken(
   if (existingMembership) {
     // Update the invitation status to ACCEPTED since we're effectively accepting it
     await supabase
-      .from('Invitation')
+      .from('invitations')
       .update({ 
         status: 'ACCEPTED', 
-        updatedAt: now.toISOString(),
-        respondedAt: now.toISOString(),
+        updated_at: now.toISOString(),
+        responded_at: now.toISOString(),
         notes: claimWithCurrentEmail ? `Claimed by ${userEmail} (original recipient: ${invitation.email})` : undefined
       })
       .eq('id', invitation.id);
@@ -480,11 +480,11 @@ export async function acceptInvitationByToken(
   
   // Accept the invitation by updating status
   await supabase
-    .from('Invitation')
+    .from('invitations')
     .update({ 
       status: 'ACCEPTED', 
-      updatedAt: now.toISOString(),
-      respondedAt: now.toISOString(),
+      updated_at: now.toISOString(),
+      responded_at: now.toISOString(),
       notes: claimWithCurrentEmail ? `Claimed by ${userEmail} (original recipient: ${invitation.email})` : undefined
     })
     .eq('id', invitation.id);
@@ -493,14 +493,14 @@ export async function acceptInvitationByToken(
   const membershipId = generateUUID();
   
   const { error: addError } = await supabase
-    .from('HouseholdUser')
+    .from('household_members')
     .insert([
       {
         id: membershipId,
         userId: userDbId,
         householdId: invitation.householdId,
         role: invitation.role,
-        joinedAt: now.toISOString()
+        joined_at: now.toISOString()
       }
     ]);
   
@@ -510,7 +510,7 @@ export async function acceptInvitationByToken(
   
   // Get household details to include in response
   const { data: household } = await supabase
-    .from('Household')
+    .from('households')
     .select('name')
     .eq('id', invitation.householdId)
     .single();
@@ -520,7 +520,7 @@ export async function acceptInvitationByToken(
     householdId: invitation.householdId,
     householdName: household?.name || 'Household',
     role: invitation.role,
-    joinedAt: now.toISOString(),
+    joined_at: now.toISOString(),
     redirectTo: `/dashboard/${invitation.householdId}`
   };
 }

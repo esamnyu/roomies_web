@@ -1,28 +1,28 @@
-// src/app/api/households/[householdId]/balances/route.ts
+// src/app/api/households/[id]/balances/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
-import { authOptions } from '@/app/api/auth/[...nextauth]/route';
+import { authOptions } from '@/lib/auth-options';
 import { supabase } from '@/lib/supabase';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { householdId: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const session = await getServerSession(authOptions);
-    
+
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    
-    const householdId = params.householdId;
+
+    const { id: householdId } = await params;
     
     // Check if user is member of the household
     const { data: membership, error: membershipError } = await supabase
-      .from('HouseholdUser')
+      .from('household_members')
       .select('userId, householdId, role')
-      .eq('userId', session.user.id)
-      .eq('householdId', householdId)
+      .eq('user_id', session.user.id)
+      .eq('household_id', householdId)
       .single();
     
     if (membershipError || !membership) {
@@ -31,9 +31,9 @@ export async function GET(
     
     // First, get all household members
     const { data: householdMembers, error: membersError } = await supabase
-      .from('HouseholdUser')
+      .from('household_members')
       .select('userId')
-      .eq('householdId', householdId);
+      .eq('household_id', householdId);
     
     if (membersError || !householdMembers) {
       return NextResponse.json({ error: 'Failed to fetch household members' }, { status: 500 });
@@ -42,7 +42,7 @@ export async function GET(
     // Then, get user details separately to avoid foreign key join issues
     const userIds = householdMembers.map(member => member.userId);
     const { data: users, error: usersError } = await supabase
-      .from('User')
+      .from('profiles')
       .select('id, name')
       .in('id', userIds);
     
@@ -68,7 +68,7 @@ export async function GET(
           amount
         )
       `)
-      .eq('householdId', householdId);
+      .eq('household_id', householdId);
     
     if (expensesError || !expenses) {
       return NextResponse.json({ error: 'Failed to fetch expenses' }, { status: 500 });

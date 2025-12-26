@@ -9,8 +9,8 @@ export interface Message {
   senderId: string;
   content: string;
   contentType?: string;
-  createdAt: string;
-  updatedAt: string;
+  created_at: string;
+  updated_at: string;
   sender?: {
     id: string;
     name: string;
@@ -32,14 +32,14 @@ export async function getHouseholdMessages(householdId: string): Promise<Message
   
   try {
     const { data, error } = await supabaseClient
-      .from('Message')
+      .from('messages')
       .select(`
         *,
         sender:senderId(id, name, avatar),
         readReceipts:MessageReadReceipt(id, userId, readAt)
       `)
-      .eq('householdId', householdId)
-      .order('createdAt', { ascending: true });
+      .eq('household_id', householdId)
+      .order('created_at', { ascending: true });
 
     if (error) {
       console.error('Error fetching messages:', error);
@@ -64,7 +64,7 @@ export async function sendMessage(householdId: string, senderId: string, content
   
   try {
     const { data, error } = await supabaseClient
-      .from('Message')
+      .from('messages')
       .insert([
         {
           id: messageId,
@@ -72,8 +72,8 @@ export async function sendMessage(householdId: string, senderId: string, content
           senderId,
           content,
           contentType: 'TEXT',
-          createdAt: now,
-          updatedAt: now
+          created_at: now,
+          updated_at: now
         }
       ])
       .select(`
@@ -112,7 +112,7 @@ export async function sendWelcomeMessage(householdId: string, userId: string, us
   
   try {
     const { data, error } = await supabaseClient
-      .from('Message')
+      .from('messages')
       .insert([
         {
           id: messageId,
@@ -120,8 +120,8 @@ export async function sendWelcomeMessage(householdId: string, userId: string, us
           senderId: userId, // System or admin user ID
           content: `👋 ${userName} has joined the household! Say hello!`,
           contentType: 'TEXT',
-          createdAt: now,
-          updatedAt: now
+          created_at: now,
+          updated_at: now
         }
       ])
       .select(`*, sender:senderId(id, name, avatar)`)
@@ -149,7 +149,7 @@ export async function markMessageAsRead(messageId: string, userId: string): Prom
       .from('MessageReadReceipt')
       .select('id, messageId, userId, readAt')
       .eq('messageId', messageId)
-      .eq('userId', userId)
+      .eq('user_id', userId)
       .single();
     
     if (!receiptError && existingReceipt) {
@@ -198,9 +198,9 @@ export async function getUnreadMessagesCount(householdId: string, userId: string
   try {
     // Get all messages for the household
     const { data: messages, error: messagesError } = await supabaseClient
-      .from('Message')
+      .from('messages')
       .select('id')
-      .eq('householdId', householdId)
+      .eq('household_id', householdId)
       .neq('senderId', userId); // Exclude messages sent by the current user
     
     if (messagesError || !messages) {
@@ -217,7 +217,7 @@ export async function getUnreadMessagesCount(householdId: string, userId: string
     const { data: receipts, error: receiptsError } = await supabaseClient
       .from('MessageReadReceipt')
       .select('messageId')
-      .eq('userId', userId)
+      .eq('user_id', userId)
       .in('messageId', messageIds);
     
     if (receiptsError) {
@@ -258,7 +258,7 @@ export function subscribeToMessages(householdId: string, callback: (message: Mes
             // Fetch the complete message with sender information
             try {
               const { data, error } = await supabaseClient
-                .from('Message')
+                .from('messages')
                 .select(`
                   *,
                   sender:senderId(id, name, avatar)
@@ -279,8 +279,8 @@ export function subscribeToMessages(householdId: string, callback: (message: Mes
                   senderId: payload.new.senderId,
                   content: payload.new.content,
                   contentType: payload.new.contentType || 'TEXT',
-                  createdAt: payload.new.createdAt || new Date().toISOString(),
-                  updatedAt: payload.new.updatedAt || new Date().toISOString()
+                  created_at: payload.new.createdAt || new Date().toISOString(),
+                  updated_at: payload.new.updatedAt || new Date().toISOString()
                 };
                 callback(simpleMessage);
               }

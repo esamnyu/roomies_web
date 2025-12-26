@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 // Assuming supabaseAdmin is the client with SERVICE_ROLE_KEY from your lib/supabase.ts
-import { supabase as supabaseAdmin, supabaseClient } from '@/lib/supabase';
+import { supabase as supabaseAdmin } from '@/lib/supabase';
 
 // --- Define User Type (align with your DB and Supabase Auth user) ---
 // You might already have a better place for this, like src/types/index.ts
@@ -85,14 +85,14 @@ export async function getUserProfile(userId: string): Promise<UserProfile | null
   // Option 1: Use SSR Client (Relies on RLS allowing user to read their own profile)
   // const supabase = createSupabaseServerClient();
   // const { data, error } = await supabase
-  //   .from('User')
+  //   .from('profiles')
   //   .select('id, name, email, avatar')
   //   .eq('id', userId)
   //   .single();
 
   // Option 2: Use Admin Client (Bypasses RLS - use if RLS restricts profile reads)
    const { data, error } = await supabaseAdmin // Use admin client
-     .from('User')
+     .from('profiles')
      .select('id, name, email, avatar') // Adjust fields as needed
      .eq('id', userId)
      .single();
@@ -137,10 +137,10 @@ export async function getCurrentUserWithProfile(): Promise<{ auth: any; profile:
 export async function verifyHouseholdAdmin(userId: string, householdId: string): Promise<boolean> {
   // Use admin client for potentially restricted HouseholdUser table access
   const { data: membership, error } = await supabaseAdmin
-    .from('HouseholdUser')
+    .from('household_members')
     .select('role')
-    .eq('userId', userId)
-    .eq('householdId', householdId)
+    .eq('user_id', userId)
+    .eq('household_id', householdId)
     .single();
 
   if (error) {
@@ -212,7 +212,7 @@ export function withHouseholdAdmin<T = any>(
       const householdIdFromParams = context.params?.id || context.params?.householdId;
 
       // Option 2: From query string (e.g., /api/some-route?householdId=...)
-      const householdIdFromQuery = request.nextUrl.searchParams.get('householdId');
+      const householdIdFromQuery = request.nextUrl.searchParams.get('household_id');
 
       // Choose the source based on your API structure, prioritizing path params
       const householdId = householdIdFromParams || householdIdFromQuery;
@@ -273,7 +273,7 @@ export async function ensureUserProfileExists(
 
     // Use Admin Client to perform upsert, bypassing RLS if necessary
     const { data, error } = await supabaseAdmin
-        .from('User')
+        .from('profiles')
         .upsert(
             {
                 id: userId, // Match based on the Auth user ID
@@ -282,7 +282,7 @@ export async function ensureUserProfileExists(
                 avatar: userAvatar,
                 // Add other default fields for your User table if needed on creation
                 // password: 'SUPABASE_AUTH' // Can be set here or via default value in DB
-                updatedAt: new Date().toISOString(), // Explicitly set update timestamp
+                updated_at: new Date().toISOString(), // Explicitly set update timestamp
             },
             {
                 onConflict: 'id', // Specify the conflict target

@@ -37,12 +37,12 @@ export default function DashboardLayout({
 
         // Fetch pending invitations count
         if (session.user.email) {
-          const { data, error, count } = await supabaseClient
-            .from('Invitation')
+          const { error, count } = await supabaseClient
+            .from('invitations')
             .select('id', { count: 'exact' })
             .eq('email', session.user.email)
-            .eq('status', 'PENDING');
-          
+            .eq('status', 'pending');
+
           if (!error && count !== null) {
             setInvitationCount(count);
           }
@@ -68,17 +68,17 @@ export default function DashboardLayout({
             {
               event: '*',
               schema: 'public',
-              table: 'Invitation',
+              table: 'invitations',
               filter: `email=eq.${session.user.email}`
             },
             async () => {
               // Refresh the invitations count when changes occur
               const { count } = await supabaseClient
-                .from('Invitation')
+                .from('invitations')
                 .select('id', { count: 'exact' })
                 .eq('email', session.user.email)
-                .eq('status', 'PENDING');
-              
+                .eq('status', 'pending');
+
               if (count !== null) {
                 setInvitationCount(count);
               }

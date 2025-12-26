@@ -1,7 +1,7 @@
 // src/app/invite/page.tsx
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Image from 'next/image';
 import Link from 'next/link';
@@ -26,35 +26,35 @@ interface InvitationDetails {
   email: string;
   role: string;
   message?: string;
-  expiresAt: string;
-  createdAt: string;
+  expires_at: string;
+  created_at: string;
   household: HouseholdInfo;
   inviter: InviterInfo;
 }
 
-export default function InvitationPage() {
+function InvitationContent() {
   const [invitation, setInvitation] = useState<InvitationDetails | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [processingAction, setProcessingAction] = useState(false);
-  const [userSession, setUserSession] = useState<any>(null);
+  const [userSession, setUserSession] = useState<{ user: { email?: string } } | null>(null);
   const [needsSignIn, setNeedsSignIn] = useState(false);
   const [showClaimConfirmation, setShowClaimConfirmation] = useState(false);
-  
+
   const router = useRouter();
   const searchParams = useSearchParams();
   const token = searchParams.get('token');
-  
+
   // Load the user session on mount
   useEffect(() => {
     const checkSession = async () => {
       const { data: { session } } = await supabaseClient.auth.getSession();
       setUserSession(session);
     };
-    
+
     checkSession();
   }, []);
-  
+
   // Fetch the invitation details when component mounts
   useEffect(() => {
     const fetchInvitation = async () => {
@@ -63,15 +63,15 @@ export default function InvitationPage() {
         setLoading(false);
         return;
       }
-      
+
       try {
         const response = await fetch(`/api/invitations/${token}`);
         const data = await response.json();
-        
+
         if (!response.ok) {
           throw new Error(data.error || 'Failed to load invitation');
         }
-        
+
         setInvitation(data);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load invitation');
@@ -79,13 +79,13 @@ export default function InvitationPage() {
         setLoading(false);
       }
     };
-    
+
     fetchInvitation();
   }, [token]);
-  
+
   const handleAcceptInvitation = async () => {
     if (!token) return;
-    
+
     setProcessingAction(true);
     try {
       const response = await fetch(`/api/invitations/${token}`, {
@@ -95,22 +95,22 @@ export default function InvitationPage() {
         },
         body: JSON.stringify({ action: 'accept' }),
       });
-      
+
       const data = await response.json();
-      
+
       if (!response.ok) {
         if (response.status === 401 && data.requiresAuth) {
           // User needs to sign in
           setNeedsSignIn(true);
           return;
         }
-        
+
         throw new Error(data.error || 'Failed to accept invitation');
       }
-      
+
       // Redirect to chat page regardless of what redirectTo says
       router.push('/chat');
-      
+
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
@@ -120,7 +120,7 @@ export default function InvitationPage() {
 
   const handleClaimInvitation = async () => {
     if (!token) return;
-    
+
     setProcessingAction(true);
     try {
       const response = await fetch(`/api/invitations/${token}`, {
@@ -128,18 +128,18 @@ export default function InvitationPage() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           action: 'accept',
-          claimWithCurrentEmail: true 
+          claimWithCurrentEmail: true
         }),
       });
-      
+
       const data = await response.json();
-      
+
       if (!response.ok) {
         throw new Error(data.error || 'Failed to accept invitation');
       }
-      
+
       // Redirect to chat page
       router.push('/chat');
     } catch (err) {
@@ -149,14 +149,14 @@ export default function InvitationPage() {
       setShowClaimConfirmation(false);
     }
   };
-  
+
   const handleDeclineInvitation = async () => {
     if (!token) return;
-    
+
     if (!confirm('Are you sure you want to decline this invitation?')) {
       return;
     }
-    
+
     setProcessingAction(true);
     try {
       const response = await fetch(`/api/invitations/${token}`, {
@@ -166,16 +166,16 @@ export default function InvitationPage() {
         },
         body: JSON.stringify({ action: 'decline' }),
       });
-      
+
       const data = await response.json();
-      
+
       if (!response.ok) {
         throw new Error(data.error || 'Failed to decline invitation');
       }
-      
+
       // Show a success message
       alert('Invitation declined successfully');
-      
+
       // Redirect to the home page
       router.push('/');
     } catch (err) {
@@ -184,7 +184,7 @@ export default function InvitationPage() {
       setProcessingAction(false);
     }
   };
-  
+
   // If we need the user to sign in first
   if (needsSignIn) {
     return (
@@ -201,7 +201,7 @@ export default function InvitationPage() {
               </p>
             )}
           </div>
-          
+
           <div className="mt-6 flex flex-col gap-3">
             <Link
               href={`/login?callbackUrl=${encodeURIComponent(`/invite?token=${token}`)}`}
@@ -209,14 +209,14 @@ export default function InvitationPage() {
             >
               Sign In
             </Link>
-            
+
             <Link
               href={`/register?email=${invitation?.email || ''}&callbackUrl=${encodeURIComponent(`/invite?token=${token}`)}`}
               className="w-full flex justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 dark:bg-gray-700 dark:text-gray-200 dark:border-gray-600 dark:hover:bg-gray-600"
             >
               Create Account
             </Link>
-            
+
             <button
               onClick={() => setNeedsSignIn(false)}
               className="mt-2 text-sm text-blue-600 hover:text-blue-500 dark:text-blue-400"
@@ -228,7 +228,7 @@ export default function InvitationPage() {
       </div>
     );
   }
-  
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900">
@@ -236,7 +236,7 @@ export default function InvitationPage() {
       </div>
     );
   }
-  
+
   if (error) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900 px-4">
@@ -262,7 +262,7 @@ export default function InvitationPage() {
       </div>
     );
   }
-  
+
   if (!invitation) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900 px-4">
@@ -285,20 +285,20 @@ export default function InvitationPage() {
       </div>
     );
   }
-  
+
   // Check if user's email matches the invitation email
   const emailMismatch = userSession && userSession.user.email !== invitation.email;
-  
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900 px-4">
       <div className="max-w-md w-full space-y-8 p-8 bg-white dark:bg-gray-800 rounded-xl shadow-md">
         <div className="text-center">
           <h1 className="text-3xl font-bold text-blue-600 dark:text-blue-400">Roomies</h1>
           <h2 className="mt-6 text-2xl font-bold text-gray-900 dark:text-white">
-            You've been invited to join a household
+            You have been invited to join a household
           </h2>
         </div>
-        
+
         <div className="mt-8">
           <div className="bg-gray-50 dark:bg-gray-700 p-5 rounded-lg">
             <div className="flex flex-col sm:flex-row sm:items-center gap-4">
@@ -317,7 +317,7 @@ export default function InvitationPage() {
                   </div>
                 )}
               </div>
-              
+
               <div>
                 <h3 className="text-lg font-medium text-gray-900 dark:text-white">
                   {invitation.inviter.name}
@@ -328,37 +328,37 @@ export default function InvitationPage() {
                 </p>
               </div>
             </div>
-            
+
             <div className="mt-4 p-4 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600">
               <h3 className="text-lg font-bold text-gray-900 dark:text-white">
                 {invitation.household.name}
               </h3>
-              
+
               {invitation.household.address && (
                 <p className="text-gray-600 dark:text-gray-400 mt-1">
                   {invitation.household.address}
                 </p>
               )}
-              
+
               <p className="mt-2 text-sm text-gray-500 dark:text-gray-300">
                 Role: <span className="font-medium">{invitation.role.charAt(0) + invitation.role.slice(1).toLowerCase()}</span>
               </p>
             </div>
-            
+
             {invitation.message && (
               <div className="mt-4">
                 <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">Message:</h4>
                 <div className="mt-1 p-3 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 italic">
-                  "{invitation.message}"
+                  &quot;{invitation.message}&quot;
                 </div>
               </div>
             )}
           </div>
-          
+
           {emailMismatch && (
             <div className="mt-4 p-4 bg-yellow-50 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200 rounded-md">
               <p className="text-sm">
-                <strong>Note:</strong> You're currently signed in as {userSession.user.email}, 
+                <strong>Note:</strong> You are currently signed in as {userSession.user.email},
                 but this invitation was sent to {invitation.email}.
               </p>
               <div className="mt-2 flex justify-end gap-2">
@@ -380,23 +380,23 @@ export default function InvitationPage() {
               </div>
             </div>
           )}
-          
+
           <div className="mt-6 flex gap-4">
             <Button
               variant="outline"
               fullWidth
               onClick={handleDeclineInvitation}
-              disabled={processingAction || (emailMismatch && !showClaimConfirmation)}
+              disabled={processingAction || (!!emailMismatch && !showClaimConfirmation)}
             >
               Decline
             </Button>
-            
+
             <Button
               variant="primary"
               fullWidth
               onClick={handleAcceptInvitation}
               isLoading={processingAction}
-              disabled={processingAction || (emailMismatch && !showClaimConfirmation)}
+              disabled={processingAction || (!!emailMismatch && !showClaimConfirmation)}
             >
               Accept
             </Button>
@@ -410,8 +410,8 @@ export default function InvitationPage() {
           <div className="bg-white dark:bg-gray-800 p-6 rounded-lg max-w-md w-full">
             <h3 className="text-lg font-bold mb-4 text-gray-900 dark:text-white">Link invitation to your account?</h3>
             <p className="mb-4 text-gray-700 dark:text-gray-300">
-              This will accept the invitation sent to <strong>{invitation.email}</strong> and 
-              link it to your current account <strong>{userSession.user.email}</strong>.
+              This will accept the invitation sent to <strong>{invitation.email}</strong> and
+              link it to your current account <strong>{userSession?.user.email}</strong>.
             </p>
             <div className="flex justify-end gap-2">
               <button
@@ -431,5 +431,21 @@ export default function InvitationPage() {
         </div>
       )}
     </div>
+  );
+}
+
+function LoadingFallback() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900">
+      <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+    </div>
+  );
+}
+
+export default function InvitationPage() {
+  return (
+    <Suspense fallback={<LoadingFallback />}>
+      <InvitationContent />
+    </Suspense>
   );
 }

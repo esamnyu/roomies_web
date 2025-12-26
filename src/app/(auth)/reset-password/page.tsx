@@ -1,11 +1,11 @@
 // src/app/(auth)/reset-password/page.tsx
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 
-export default function ResetPasswordPage() {
+function ResetPasswordForm() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -13,7 +13,7 @@ export default function ResetPasswordPage() {
   const [success, setSuccess] = useState(false);
   const router = useRouter();
   const searchParams = useSearchParams();
-  
+
   // Check if we have a valid reset token in the URL
   useEffect(() => {
     // The token is automatically handled by Supabase Auth
@@ -27,14 +27,14 @@ export default function ResetPasswordPage() {
     e.preventDefault();
     setIsSubmitting(true);
     setError('');
-    
+
     // Validate passwords
     if (password !== confirmPassword) {
       setError('Passwords do not match');
       setIsSubmitting(false);
       return;
     }
-    
+
     if (password.length < 8) {
       setError('Password must be at least 8 characters long');
       setIsSubmitting(false);
@@ -58,11 +58,11 @@ export default function ResetPasswordPage() {
 
       // Show success message
       setSuccess(true);
-      
+
       // Clear form
       setPassword('');
       setConfirmPassword('');
-      
+
       // Redirect to login after a delay
       setTimeout(() => {
         router.push('/login');
@@ -88,7 +88,7 @@ export default function ResetPasswordPage() {
             Enter your new password below
           </p>
         </div>
-        
+
         {error && (
           <div className="rounded-md bg-red-50 dark:bg-red-900 p-4">
             <div className="flex">
@@ -105,7 +105,7 @@ export default function ResetPasswordPage() {
             </div>
           </div>
         )}
-        
+
         {success ? (
           <div className="rounded-md bg-green-50 dark:bg-green-900 p-6 text-center">
             <div className="flex flex-col items-center">
@@ -185,7 +185,7 @@ export default function ResetPasswordPage() {
                 {isSubmitting ? 'Resetting Password...' : 'Reset Password'}
               </button>
             </div>
-            
+
             <div className="flex items-center justify-center">
               <div className="text-sm">
                 <Link href="/login" className="font-medium text-blue-600 hover:text-blue-500 dark:text-blue-400 dark:hover:text-blue-300">
@@ -197,5 +197,21 @@ export default function ResetPasswordPage() {
         )}
       </div>
     </div>
+  );
+}
+
+function LoadingFallback() {
+  return (
+    <div className="flex min-h-screen items-center justify-center">
+      <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+    </div>
+  );
+}
+
+export default function ResetPasswordPage() {
+  return (
+    <Suspense fallback={<LoadingFallback />}>
+      <ResetPasswordForm />
+    </Suspense>
   );
 }

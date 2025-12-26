@@ -5,6 +5,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { supabaseClient } from '@/lib/supabase';
+import GoogleSignInButton from '@/components/auth/GoogleSignInButton';
 
 export default function RegisterPage() {
   const [name, setName] = useState('');
@@ -73,14 +74,14 @@ export default function RegisterPage() {
       if (data?.user) {
         try {
           const { error: insertError } = await supabaseClient
-            .from('User')
+            .from('profiles')
             .insert({
               id: data.user.id,
               email,
               name,
               password: 'MANAGED_BY_SUPABASE_AUTH',
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString()
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString()
             });
 
           if (insertError) {
@@ -289,6 +290,21 @@ export default function RegisterPage() {
               {loading ? 'Creating account...' : 'Create account'}
             </button>
           </div>
+
+          {/* Divider */}
+          <div className="relative">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-gray-300 dark:border-gray-600" />
+            </div>
+            <div className="relative flex justify-center text-sm">
+              <span className="bg-gray-50 dark:bg-gray-900 px-2 text-gray-500 dark:text-gray-400">
+                Or continue with
+              </span>
+            </div>
+          </div>
+
+          {/* Google Sign In */}
+          <GoogleSignInButton />
         </form>
       </div>
     </div>

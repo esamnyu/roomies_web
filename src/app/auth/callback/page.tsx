@@ -1,11 +1,11 @@
 // src/app/auth/callback/page.tsx
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { supabaseClient } from '@/lib/supabase';
 
-export default function AuthCallbackPage() {
+function AuthCallbackContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -20,38 +20,46 @@ export default function AuthCallbackPage() {
         if (code) {
           // Exchange the code for a session
           await supabaseClient.auth.exchangeCodeForSession(code);
-          
+
           // Check if the user has been fully registered in the User table
           const { data: { session } } = await supabaseClient.auth.getSession();
-          
+
           if (session) {
-            // Check if the user exists in our database
-            const { data: user, error: userError } = await supabaseClient
-              .from('User')
+            // Check if the user profile exists in our database
+            const { data: _profile, error: profileError } = await supabaseClient
+              .from('profiles')
               .select('id')
               .eq('id', session.user.id)
               .single();
-            
-            if (userError) {
-              // User doesn't exist in our database yet - create them
+
+            if (profileError) {
+              // Profile doesn't exist in our database yet - create it
+              // Get name from metadata (works for both email signup and OAuth)
+              const userName = session.user.user_metadata?.full_name
+                || session.user.user_metadata?.name
+                || session.user.email?.split('@')[0]
+                || 'User';
+
+              // Get avatar URL from OAuth provider (e.g., Google profile picture)
+              const avatarUrl = session.user.user_metadata?.avatar_url
+                || session.user.user_metadata?.picture;
+
               const { error: insertError } = await supabaseClient
-                .from('User')
+                .from('profiles')
                 .insert([
                   {
                     id: session.user.id,
                     email: session.user.email,
-                    name: session.user.user_metadata?.name || session.user.email?.split('@')[0] || 'User',
-                    password: 'MANAGED_BY_SUPABASE_AUTH',
-                    createdAt: new Date().toISOString(),
-                    updatedAt: new Date().toISOString()
+                    name: userName,
+                    avatar_url: avatarUrl || null
                   }
                 ]);
-              
+
               if (insertError) {
-                console.error('Error creating user record:', insertError);
+                console.error('Error creating user profile:', insertError);
               }
             }
-            
+
             // Show welcome message for newly verified users
             const isNewUser = searchParams.get('type') === 'signup';
             if (isNewUser) {
@@ -93,5 +101,28 @@ export default function AuthCallbackPage() {
         </p>
       </div>
     </div>
+  );
+}
+
+function LoadingFallback() {
+  return (
+    <div className="flex min-h-screen items-center justify-center py-12 px-4 sm:px-6 lg:px-8 bg-gray-50 dark:bg-gray-900">
+      <div className="w-full max-w-md space-y-8 text-center">
+        <div className="flex justify-center">
+          <h1 className="text-3xl font-bold text-blue-600 dark:text-blue-400">Roomies</h1>
+        </div>
+        <div className="mt-4 flex justify-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function AuthCallbackPage() {
+  return (
+    <Suspense fallback={<LoadingFallback />}>
+      <AuthCallbackContent />
+    </Suspense>
   );
 }

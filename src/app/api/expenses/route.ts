@@ -1,9 +1,7 @@
 // src/app/api/expenses/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-// Removed Prisma import
-// import { prisma } from '@/lib/prisma';
 import { getServerSession } from 'next-auth';
-import { authOptions } from '@/app/api/auth/[...nextauth]/route';
+import { authOptions } from '@/lib/auth-options';
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { generateUUID } from '@/lib/utils'; // Assuming you have a UUID generator
@@ -54,9 +52,9 @@ export async function GET(request: NextRequest) {
 
     const userId = session.user.id;
 
-    // Get household ID from query params
+    // Get household ID from query params (accept both camelCase and snake_case)
     const { searchParams } = new URL(request.url);
-    const householdId = searchParams.get('householdId');
+    const householdId = searchParams.get('household_id') || searchParams.get('householdId');
 
     if (!householdId) {
       return NextResponse.json({ error: 'Household ID is required' }, { status: 400 });
@@ -64,10 +62,10 @@ export async function GET(request: NextRequest) {
 
     // Check if user is a member of the household using Supabase
     const { data: householdUser, error: membershipError } = await supabase
-      .from('HouseholdUser')
-      .select('userId') // Select only necessary field
-      .eq('userId', userId)
-      .eq('householdId', householdId)
+      .from('household_members')
+      .select('user_id') // Select only necessary field
+      .eq('user_id', userId)
+      .eq('household_id', householdId)
       .maybeSingle(); // Use maybeSingle to handle no membership found
 
     if (membershipError) {
@@ -81,20 +79,17 @@ export async function GET(request: NextRequest) {
 
     // Fetch all expenses for the household using Supabase
     const { data: expenses, error: expensesError } = await supabase
-      .from('Expense')
+      .from('expenses')
       .select(`
         *,
-        creator:User!creatorId(id, name, email, avatar),
-        splits:ExpenseSplit(
+        paid_by_user:profiles!paid_by(id, name, email, avatar_url),
+        created_by_user:profiles!created_by(id, name, email, avatar_url),
+        splits:expense_splits(
           *,
-          user:User!userId(id, name, email, avatar)
-        ),
-        payments:Payment(
-          *,
-          user:User!userId(id, name, email, avatar)
+          user:profiles!user_id(id, name, email, avatar_url)
         )
       `)
-      .eq('householdId', householdId)
+      .eq('household_id', householdId)
       .order('date', { ascending: false });
 
     if (expensesError) {
@@ -148,10 +143,10 @@ export async function POST(request: NextRequest) {
 
     // Check if user is a member of the household using Supabase
     const { data: householdUser, error: membershipError } = await supabase
-      .from('HouseholdUser')
-      .select('userId')
-      .eq('userId', userId)
-      .eq('householdId', householdId)
+      .from('household_members')
+      .select('user_id')
+      .eq('user_id', userId)
+      .eq('household_id', householdId)
       .maybeSingle();
 
     if (membershipError) {
@@ -169,18 +164,17 @@ export async function POST(request: NextRequest) {
     const now = new Date().toISOString();
 
     const { data: newExpense, error: expenseInsertError } = await supabase
-      .from('Expense')
+      .from('expenses')
       .insert({
           id: expenseId,
-          title,
+          description: title || description, // Use title as description (expenses table has description, not title)
           amount: parsedAmount,
           date: new Date(date).toISOString(), // Ensure it's a valid ISO string
-          description,
-          splitType,
-          householdId,
-          creatorId: userId,
-          createdAt: now, // Explicitly set timestamps
-          updatedAt: now
+          household_id: householdId,
+          paid_by: userId,
+          created_by: userId,
+          created_at: now, // Explicitly set timestamps
+          updated_at: now
       })
       .select('id') // Select only the ID
       .single();
@@ -199,75 +193,38 @@ export async function POST(request: NextRequest) {
         }
         return {
             id: generateUUID(), // Generate UUID for split
-            expenseId: newExpense.id,
-            userId: split.userId,
+            expense_id: newExpense.id,
+            user_id: split.userId,
             amount: splitAmount,
-            percentage: split.percentage || null,
-            createdAt: now,
-            updatedAt: now
+            settled: false,
+            created_at: now,
+            updated_at: now
         };
     });
 
     const { error: splitsInsertError } = await supabase
-        .from('ExpenseSplit')
+        .from('expense_splits')
         .insert(splitsData);
 
     if (splitsInsertError) {
       console.error('Error creating expense splits:', splitsInsertError);
       // CRITICAL: Need rollback here in a real transaction
-      await supabase.from('Expense').delete().eq('id', newExpense.id); // Attempt cleanup
+      await supabase.from('expenses').delete().eq('id', newExpense.id); // Attempt cleanup
       return NextResponse.json({ error: 'Failed to create expense splits' }, { status: 500 });
-    }
-
-    // 3. Create the Payments (for users other than the creator)
-    const paymentsData = splits
-      .filter((split: any) => split.userId !== userId) // Don't create payment for the creator
-      .map((split: any) => {
-          const paymentAmount = parseFloat(split.amount);
-          if (isNaN(paymentAmount)) {
-              throw new Error(`Invalid payment amount for user ${split.userId}`);
-          }
-          return {
-            id: generateUUID(), // Generate UUID for payment
-            expenseId: newExpense.id,
-            userId: split.userId,
-            amount: paymentAmount,
-            status: 'PENDING', // Default status
-            createdAt: now,
-            updatedAt: now
-          };
-      });
-
-    // Only insert if there are payments to create
-    if (paymentsData.length > 0) {
-        const { error: paymentsInsertError } = await supabase
-            .from('Payment')
-            .insert(paymentsData);
-
-        if (paymentsInsertError) {
-            console.error('Error creating payments:', paymentsInsertError);
-            // CRITICAL: Need rollback here in a real transaction
-            await supabase.from('ExpenseSplit').delete().eq('expenseId', newExpense.id); // Attempt cleanup
-            await supabase.from('Expense').delete().eq('id', newExpense.id); // Attempt cleanup
-            return NextResponse.json({ error: 'Failed to create payments' }, { status: 500 });
-        }
     }
     // --- Transaction End (Conceptual) ---
 
 
     // Fetch the complete expense data to return
     const { data: completeExpense, error: fetchError } = await supabase
-      .from('Expense')
+      .from('expenses')
       .select(`
         *,
-        creator:User!creatorId(id, name, email, avatar),
-        splits:ExpenseSplit(
+        paid_by_user:profiles!paid_by(id, name, email, avatar_url),
+        created_by_user:profiles!created_by(id, name, email, avatar_url),
+        splits:expense_splits(
           *,
-          user:User!userId(id, name, email, avatar)
-        ),
-        payments:Payment(
-          *,
-          user:User!userId(id, name, email, avatar)
+          user:profiles!user_id(id, name, email, avatar_url)
         )
       `)
       .eq('id', newExpense.id)

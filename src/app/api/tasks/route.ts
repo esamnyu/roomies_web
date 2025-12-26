@@ -51,7 +51,7 @@ export async function GET(request: NextRequest) {
     console.log('[Tasks API] User authenticated:', user.id);
 
     const { searchParams } = new URL(request.url);
-    const householdId = searchParams.get('householdId');
+    const householdId = searchParams.get('household_id');
     const taskId = searchParams.get('taskId'); // Renamed from 'id' in original code to 'taskId' for clarity
 
      if (!householdId && !taskId) {
@@ -82,10 +82,10 @@ export async function GET(request: NextRequest) {
 
         // Add a check: Ensure the user belongs to the task's household
          const { data: taskMembership, error: taskMembershipError } = await supabase
-             .from('HouseholdUser')
+             .from('household_members')
              .select('id') // Only need to check existence
-             .eq('userId', user.id)
-             .eq('householdId', task.householdId) // Assuming task object has householdId
+             .eq('user_id', user.id)
+             .eq('household_id', task.householdId) // Assuming task object has householdId
              .limit(1) // Optimization
              .maybeSingle();
 
@@ -106,10 +106,10 @@ export async function GET(request: NextRequest) {
     if (householdId) {
       console.log('[Tasks API] Checking household membership for user', user.id, 'in household', householdId);
       const { data: householdUser, error: membershipError } = await supabase
-        .from('HouseholdUser')
+        .from('household_members')
         .select('id, role') // Select role if needed later
-        .eq('userId', user.id)
-        .eq('householdId', householdId)
+        .eq('user_id', user.id)
+        .eq('household_id', householdId)
         .maybeSingle(); // Use maybeSingle
 
       if (membershipError) {
@@ -131,7 +131,7 @@ export async function GET(request: NextRequest) {
               creator:creatorId(id, name, email, avatar),
               assignee:assigneeId(id, name, email, avatar)
           `)
-          .eq('householdId', householdId)
+          .eq('household_id', householdId)
           .order('priority', { ascending: false }) // Consider if priority is string or number for correct ordering
           .order('dueDate', { ascending: true, nullsFirst: false }); // Keep tasks without due date last
 
@@ -190,10 +190,10 @@ export async function POST(request: NextRequest) {
     // Check membership using user.id
     console.log('[Tasks API] Checking household membership for user', user.id);
     const { data: householdUser, error: membershipError } = await supabase
-        .from('HouseholdUser')
+        .from('household_members')
         .select('id, role')
-        .eq('userId', user.id)
-        .eq('householdId', householdId)
+        .eq('user_id', user.id)
+        .eq('household_id', householdId)
         .maybeSingle(); // Use maybeSingle
 
     if (membershipError) { return NextResponse.json({ error: 'Error verifying household membership', details: membershipError.message }, { status: 500 });}
@@ -218,8 +218,8 @@ export async function POST(request: NextRequest) {
          recurring: !!recurring, // Ensure boolean
          recurrenceRule: recurrenceRule || null, // Ensure null if empty/undefined
          householdId,
-         createdAt: now,
-         updatedAt: now,
+         created_at: now,
+         updated_at: now,
          completedAt: status === 'COMPLETED' ? now : null // Set completedAt if created as completed
     };
 
@@ -287,10 +287,10 @@ export async function PATCH(request: NextRequest) {
 
       // Check membership using user.id
        const { data: membership, error: membershipError } = await supabase
-          .from('HouseholdUser')
+          .from('household_members')
           .select('userId, role') // Select role for admin check
-          .eq('userId', user.id)
-          .eq('householdId', existingTask.householdId)
+          .eq('user_id', user.id)
+          .eq('household_id', existingTask.householdId)
           .maybeSingle(); // Use maybeSingle
 
        if (membershipError) { return NextResponse.json({ error: 'Error verifying household membership', details: membershipError.message }, { status: 500 });}
@@ -311,7 +311,7 @@ export async function PATCH(request: NextRequest) {
 
       // --- Corrected updateData definition and assignment ---
       const updateData: {
-          updatedAt: string;
+          updated_at: string;
           title?: string;
           description?: string | null;
           status?: string;
@@ -322,7 +322,7 @@ export async function PATCH(request: NextRequest) {
           recurrenceRule?: string | null;
           completedAt?: string | null; // Explicitly include completedAt
       } = {
-          updatedAt: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
           // Start with null/undefined for potentially updated fields
           completedAt: null
       };
@@ -422,10 +422,10 @@ export async function DELETE(request: NextRequest) {
 
       // Check membership using user.id
       const { data: membership, error: membershipError } = await supabase
-          .from('HouseholdUser')
+          .from('household_members')
           .select('userId, role') // Select role for admin check
-          .eq('userId', user.id)
-          .eq('householdId', existingTask.householdId)
+          .eq('user_id', user.id)
+          .eq('household_id', existingTask.householdId)
           .maybeSingle(); // Use maybeSingle
 
       if (membershipError) { return NextResponse.json({ error: 'Error verifying household membership', details: membershipError.message }, { status: 500 });}

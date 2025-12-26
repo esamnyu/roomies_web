@@ -59,10 +59,10 @@ export default async function TasksPage() {
   
   // Get user's current household
   const { data: householdUser, error: householdError } = await supabase
-    .from('HouseholdUser')
-    .select('householdId')
-    .eq('userId', session.user.id)
-    .order('joinedAt', { ascending: false })
+    .from('household_members')
+    .select('household_id')
+    .eq('user_id', session.user.id)
+    .order('joined_at', { ascending: false })
     .limit(1)
     .single()
   
@@ -80,7 +80,7 @@ export default async function TasksPage() {
   
   // Get household members for task assignments
   const { data: membersData, error: membersError } = await supabase
-    .from('HouseholdUser')
+    .from('household_members')
     .select(`
       userId,
       user:userId(
@@ -89,7 +89,7 @@ export default async function TasksPage() {
         avatar
       )
     `)
-    .eq('householdId', householdUser.householdId)
+    .eq('household_id', householdUser.household_id)
 
   if (membersError) {
      console.error("Members fetch error:", membersError);
@@ -124,7 +124,7 @@ export default async function TasksPage() {
       creator:creatorId(id, name, avatar),
       assignee:assigneeId(id, name, avatar)
     `)
-    .eq('householdId', householdUser.householdId)
+    .eq('household_id', householdUser.household_id)
     .order('priority', { ascending: false })
     .order('dueDate', { ascending: true })
 
@@ -138,7 +138,7 @@ export default async function TasksPage() {
     <TasksClientPage 
       initialTasks={initialTasks || []}
       members={members} // Pass the correctly typed and filtered members array
-      householdId={householdUser.householdId}
+      householdId={householdUser.household_id}
       currentUserId={session.user.id}
     />
   )

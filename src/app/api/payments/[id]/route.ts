@@ -1,14 +1,9 @@
 // src/app/api/payments/[id]/route.ts
+// NOTE: Adapted to use expense_splits instead of non-existent Payment table
 import { NextRequest, NextResponse } from 'next/server';
-// Removed Prisma import
-// import { prisma } from '@/lib/prisma';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/app/api/auth/[...nextauth]/route';
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { cookies } from 'next/headers';
-import { generateUUID } from '@/lib/utils'; // Assuming you have this
 
-// Helper function (same as in expenses route)
 async function createSupabaseRouteHandlerClient() {
   const cookieStore = await cookies();
   return createServerClient(
@@ -30,55 +25,52 @@ async function createSupabaseRouteHandlerClient() {
   );
 }
 
-// --- Helper Function to Check Permissions ---
-// Returns { allowed: boolean, paymentData?: any, membership?: any, error?: string, status?: number }
-async function checkPaymentPermissions(supabase: any, paymentId: string, userId: string) {
-    // 1. Fetch Payment with related Expense and Creator
-    const { data: paymentData, error: paymentError } = await supabase
-      .from('Payment')
-      .select(`
-        *,
-        expense:Expense!inner(
-            id,
-            creatorId,
-            householdId
-        )
-      `)
-      .eq('id', paymentId)
-      .single();
+// Helper to check permissions
+async function checkSplitPermissions(supabase: any, splitId: string, userId: string) {
+  const { data: split, error: splitError } = await supabase
+    .from('expense_splits')
+    .select(`
+      *,
+      expense:expenses!inner(
+        id,
+        paid_by,
+        created_by,
+        household_id
+      )
+    `)
+    .eq('id', splitId)
+    .single();
 
-    if (paymentError) {
-      console.error("Error fetching payment for permission check:", paymentError);
-      return { allowed: false, error: 'Failed to fetch payment data.', status: 500 };
-    }
-    if (!paymentData) {
-      return { allowed: false, error: 'Payment not found.', status: 404 };
-    }
+  if (splitError) {
+    console.error("Error fetching split for permission check:", splitError);
+    return { allowed: false, error: 'Failed to fetch payment data.', status: 500 };
+  }
+  if (!split) {
+    return { allowed: false, error: 'Payment not found.', status: 404 };
+  }
 
-    // 2. Check if user is member of the household associated with the expense
-    const { data: membership, error: membershipError } = await supabase
-        .from('HouseholdUser')
-        .select('userId, role')
-        .eq('userId', userId)
-        .eq('householdId', paymentData.expense.householdId)
-        .single();
+  const { data: membership, error: membershipError } = await supabase
+    .from('household_members')
+    .select('user_id, role')
+    .eq('user_id', userId)
+    .eq('household_id', split.expense.household_id)
+    .single();
 
-    if (membershipError) {
-        console.error("Error checking household membership:", membershipError);
-        return { allowed: false, error: 'Failed to verify household membership.', status: 500 };
-    }
-    if (!membership) {
-        return { allowed: false, error: 'You are not a member of this household.', status: 403 };
-    }
+  if (membershipError) {
+    console.error("Error checking household membership:", membershipError);
+    return { allowed: false, error: 'Failed to verify household membership.', status: 500 };
+  }
+  if (!membership) {
+    return { allowed: false, error: 'You are not a member of this household.', status: 403 };
+  }
 
-    return { allowed: true, paymentData, membership };
+  return { allowed: true, split, membership };
 }
 
-
-// GET /api/payments/[id] - Get a specific payment
+// GET /api/payments/[id] - Get a specific payment (expense split)
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   const supabase = await createSupabaseRouteHandlerClient();
   try {
@@ -86,51 +78,54 @@ export async function GET(
     if (sessionError) throw new Error(sessionError.message);
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const paymentId = params.id;
-    if (!paymentId) return NextResponse.json({ error: 'Payment ID is required' }, { status: 400 });
+    const { id: splitId } = await params;
+    if (!splitId) return NextResponse.json({ error: 'Payment ID is required' }, { status: 400 });
 
-    // Fetch the payment and check household membership in one go
-    const { data: payment, error: fetchError } = await supabase
-        .from('Payment')
-        .select(`
-            *,
-            expense:Expense!inner(
-                *,
-                creator:User!creatorId(id, name, email, avatar),
-                household:Household!inner(id, name)
-            ),
-            user:User!userId(id, name, email, avatar)
-        `)
-        .eq('id', paymentId)
-        // Add check to ensure the current user is part of the household
-        // This requires knowing the household ID, obtained via the join
-        // A direct filter like this might need adjustments based on exact Supabase capabilities or RLS
-        // Alternative: Fetch payment, then check membership separately if needed.
-        // .eq('expense.household.HouseholdUser.userId', session.user.id) // Example, might not work directly
-        .single();
+    const { data: split, error: fetchError } = await supabase
+      .from('expense_splits')
+      .select(`
+        *,
+        expense:expenses!inner(
+          *,
+          paid_by_user:profiles!paid_by(id, name, email, avatar_url),
+          household:households!household_id(id, name)
+        ),
+        user:profiles!user_id(id, name, email, avatar_url)
+      `)
+      .eq('id', splitId)
+      .single();
 
-
-    if (fetchError) {
-        console.error('Error fetching payment:', fetchError);
-        return NextResponse.json({ error: 'Failed to fetch payment or payment not found' }, { status: 500 }); // Or 404 if appropriate
-    }
-    if (!payment) {
-        return NextResponse.json({ error: 'Payment not found' }, { status: 404 });
+    if (fetchError || !split) {
+      console.error('Error fetching payment:', fetchError);
+      return NextResponse.json({ error: 'Payment not found' }, { status: 404 });
     }
 
-    // Now, explicitly verify membership (more reliable than complex filter)
+    // Verify membership
     const { data: membership, error: membershipError } = await supabase
-        .from('HouseholdUser')
-        .select('userId')
-        .eq('userId', session.user.id)
-        .eq('householdId', payment.expense.household.id)
-        .maybeSingle();
+      .from('household_members')
+      .select('user_id')
+      .eq('user_id', session.user.id)
+      .eq('household_id', split.expense.household_id)
+      .maybeSingle();
 
     if (membershipError) throw membershipError;
     if (!membership) {
-        return NextResponse.json({ error: 'You are not authorized to view this payment (not member)' }, { status: 403 });
+      return NextResponse.json({ error: 'You are not authorized to view this payment' }, { status: 403 });
     }
 
+    // Transform to expected format
+    const payment = {
+      id: split.id,
+      expenseId: split.expense_id,
+      userId: split.user_id,
+      amount: split.amount,
+      status: split.settled ? 'COMPLETED' : 'PENDING',
+      date: split.settled_at,
+      created_at: split.created_at,
+      updated_at: split.updated_at,
+      expense: split.expense,
+      user: split.user
+    };
 
     return NextResponse.json(payment);
   } catch (error) {
@@ -140,19 +135,19 @@ export async function GET(
   }
 }
 
-// PATCH /api/payments/[id] - Update payment status
+// PATCH /api/payments/[id] - Update payment status (mark split as settled/unsettled)
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const supabase = createSupabaseRouteHandlerClient();
+  const supabase = await createSupabaseRouteHandlerClient();
   try {
-    const { data: { session }, error: sessionError } = await (await supabase).auth.getSession();
+    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
     if (sessionError) throw new Error(sessionError.message);
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const paymentId = params.id;
-    if (!paymentId) return NextResponse.json({ error: 'Payment ID is required' }, { status: 400 });
+    const { id: splitId } = await params;
+    if (!splitId) return NextResponse.json({ error: 'Payment ID is required' }, { status: 400 });
 
     const { status } = await request.json();
 
@@ -161,60 +156,61 @@ export async function PATCH(
       return NextResponse.json({ error: 'Invalid status value. Must be PENDING, COMPLETED, or DECLINED' }, { status: 400 });
     }
 
-    // --- Check Permissions ---
-    const permCheck = await checkPaymentPermissions(supabase, paymentId, session.user.id);
+    const permCheck = await checkSplitPermissions(supabase, splitId, session.user.id);
     if (!permCheck.allowed) {
-        return NextResponse.json({ error: permCheck.error }, { status: permCheck.status });
+      return NextResponse.json({ error: permCheck.error }, { status: permCheck.status });
     }
-    const { paymentData, membership } = permCheck;
+    const { split, membership } = permCheck;
 
     // Determine who can update
-    const isPaymentUser = paymentData.userId === session.user.id;
-    const isExpenseCreator = paymentData.expense.creatorId === session.user.id;
-    const isAdmin = membership.role === 'ADMIN';
+    const isSplitUser = split.user_id === session.user.id;
+    const isExpensePayer = split.expense.paid_by === session.user.id;
+    const isAdmin = membership.role === 'admin';
 
-    if (!isPaymentUser && !isExpenseCreator && !isAdmin) {
+    if (!isSplitUser && !isExpensePayer && !isAdmin) {
       return NextResponse.json({ error: 'You are not authorized to update this payment' }, { status: 403 });
     }
-    // --- End Check Permissions ---
 
-    // Prepare update data
-    const updatePayload: { status: string; date?: string | null, updatedAt: string } = {
-        status,
-        updatedAt: new Date().toISOString()
-    };
-    if (status === 'COMPLETED') {
-      updatePayload.date = new Date().toISOString();
-    } else {
-      // Explicitly set date to null if status is not COMPLETED
-      updatePayload.date = null;
-    }
+    const isSettled = status === 'COMPLETED';
+    const now = new Date().toISOString();
 
-    // Update the payment in Supabase
-    const { data: updatedPayment, error: updateError } = await (await supabase)
-      .from('Payment')
-      .update(updatePayload)
-      .eq('id', paymentId)
+    const { data: updatedSplit, error: updateError } = await supabase
+      .from('expense_splits')
+      .update({
+        settled: isSettled,
+        settled_at: isSettled ? now : null,
+        updated_at: now
+      })
+      .eq('id', splitId)
       .select(`
-         *,
-         expense:Expense!inner(
-             *,
-             creator:User!creatorId(id, name, email, avatar)
-         ),
-         user:User!userId(id, name, email, avatar)
-      `) // Select updated data with relations
+        *,
+        expense:expenses!inner(
+          *,
+          paid_by_user:profiles!paid_by(id, name, email, avatar_url)
+        ),
+        user:profiles!user_id(id, name, email, avatar_url)
+      `)
       .single();
 
-    if (updateError) {
+    if (updateError || !updatedSplit) {
       console.error('Error updating payment:', updateError);
       return NextResponse.json({ error: 'Failed to update payment status' }, { status: 500 });
     }
-     if (!updatedPayment) {
-        return NextResponse.json({ error: 'Failed to update payment or payment not found after update' }, { status: 500 });
-    }
 
+    const payment = {
+      id: updatedSplit.id,
+      expenseId: updatedSplit.expense_id,
+      userId: updatedSplit.user_id,
+      amount: updatedSplit.amount,
+      status: updatedSplit.settled ? 'COMPLETED' : 'PENDING',
+      date: updatedSplit.settled_at,
+      created_at: updatedSplit.created_at,
+      updated_at: updatedSplit.updated_at,
+      expense: updatedSplit.expense,
+      user: updatedSplit.user
+    };
 
-    return NextResponse.json(updatedPayment);
+    return NextResponse.json(payment);
   } catch (error) {
     console.error('Error in PATCH /api/payments/[id]:', error);
     const message = error instanceof Error ? error.message : 'Failed to update payment';
@@ -222,134 +218,13 @@ export async function PATCH(
   }
 }
 
-// DELETE /api/payments/[id] - Delete a payment
+// DELETE /api/payments/[id] - This doesn't make sense for splits, but provide response
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
-    const supabase = createSupabaseRouteHandlerClient();
-    try {
-      const { data: { session }, error: sessionError } = await (await supabase).auth.getSession();
-      if (sessionError) throw new Error(sessionError.message);
-      if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-      const paymentId = params.id;
-      if (!paymentId) return NextResponse.json({ error: 'Payment ID is required' }, { status: 400 });
-
-      // --- Check Permissions ---
-      const permCheck = await checkPaymentPermissions(supabase, paymentId, session.user.id);
-      if (!permCheck.allowed) {
-          return NextResponse.json({ error: permCheck.error }, { status: permCheck.status });
-      }
-      const { paymentData, membership } = permCheck;
-
-      // Only expense creator or admin can delete
-      const isExpenseCreator = paymentData.expense.creatorId === session.user.id;
-      const isAdmin = membership.role === 'ADMIN';
-
-      if (!isExpenseCreator && !isAdmin) {
-        return NextResponse.json({ error: 'Only the expense creator or a household admin can delete a payment' }, { status: 403 });
-      }
-       // --- End Check Permissions ---
-
-       // Optional: Add check to prevent deleting COMPLETED payments if needed
-       if (paymentData.status === 'COMPLETED') {
-           console.warn(`Attempting to delete a COMPLETED payment (ID: ${paymentId}) by user ${session.user.id}.`);
-           // Depending on policy, you might return an error here:
-           // return NextResponse.json({ error: 'Cannot delete completed payments' }, { status: 400 });
-       }
-
-
-      // Delete the payment
-      const { error: deleteError } = await (await supabase)
-        .from('Payment')
-        .delete()
-        .eq('id', paymentId);
-
-      if (deleteError) {
-        console.error('Error deleting payment:', deleteError);
-        return NextResponse.json({ error: 'Failed to delete payment' }, { status: 500 });
-      }
-
-      return NextResponse.json({ message: 'Payment deleted successfully' });
-
-    } catch (error) {
-      console.error('Error in DELETE /api/payments/[id]:', error);
-      const message = error instanceof Error ? error.message : 'Failed to delete payment';
-      return NextResponse.json({ error: message }, { status: 500 });
-    }
-}
-
-// POST /api/payments/[id]/remind - Send a reminder (Conceptual)
-export async function POST(
-  request: NextRequest,
-  { params }: { params: { id: string } }
-) {
-  const supabase = createSupabaseRouteHandlerClient();
-  try {
-    // Check if the route is specifically for reminders
-    const pathname = request.nextUrl.pathname;
-     if (!pathname.endsWith('/remind')) {
-       // If not a reminder route, handle as potential standard POST if needed, or reject
-       // For now, assume only remind uses POST on this specific path pattern
-       return NextResponse.json({ error: 'Method Not Allowed or Invalid Endpoint' }, { status: 405 });
-     }
-
-
-    const { data: { session }, error: sessionError } = await (await supabase).auth.getSession();
-    if (sessionError) throw new Error(sessionError.message);
-    if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-    const paymentId = params.id;
-     if (!paymentId) return NextResponse.json({ error: 'Payment ID is required' }, { status: 400 });
-
-    // --- Check Permissions ---
-    const permCheck = await checkPaymentPermissions(supabase, paymentId, session.user.id);
-    if (!permCheck.allowed) {
-        return NextResponse.json({ error: permCheck.error }, { status: permCheck.status });
-    }
-    const { paymentData, membership } = permCheck;
-
-    // Only expense creator or admin can send reminders
-    const isExpenseCreator = paymentData.expense.creatorId === session.user.id;
-    const isAdmin = membership.role === 'ADMIN';
-
-    if (!isExpenseCreator && !isAdmin) {
-      return NextResponse.json({ error: 'Only the expense creator or a household admin can send payment reminders' }, { status: 403 });
-    }
-     // --- End Check Permissions ---
-
-    // Check if the payment is still pending
-    if (paymentData.status !== 'PENDING') {
-      return NextResponse.json({ error: 'Cannot send a reminder for a non-pending payment' }, { status: 400 });
-    }
-
-    // "Send" reminder by updating the updatedAt timestamp
-    const { data: updatedPayment, error: updateError } = await (await supabase)
-      .from('Payment')
-      .update({ updatedAt: new Date().toISOString() }) // Just touch the timestamp
-      .eq('id', paymentId)
-      .select('updatedAt') // Select only the updated timestamp
-      .single();
-
-    if (updateError || !updatedPayment) {
-      console.error('Error updating payment timestamp for reminder:', updateError);
-      return NextResponse.json({ error: 'Failed to mark reminder (update timestamp)' }, { status: 500 });
-    }
-
-    // TODO: Implement actual email/notification sending logic here
-    // using paymentData.userId, paymentData.amount, etc.
-    console.log(`Reminder logic executed for Payment ID: ${paymentId}. User to remind: ${paymentData.userId}`);
-
-
-    return NextResponse.json({
-        message: 'Payment reminder sent successfully (timestamp updated)',
-        reminderSentAt: updatedPayment.updatedAt
-    });
-
-  } catch (error) {
-    console.error('Error in POST /api/payments/[id]/remind:', error);
-    const message = error instanceof Error ? error.message : 'Failed to send reminder';
-    return NextResponse.json({ error: message }, { status: 500 });
-  }
+  return NextResponse.json(
+    { error: 'Expense splits cannot be deleted directly. Delete the expense instead.' },
+    { status: 400 }
+  );
 }

@@ -7,18 +7,20 @@ import { supabaseClient } from '@/lib/supabase';
 import Button from '@/components/ui/Button';
 import Card from '@/components/ui/Card';
 
-// Define the interface for invitation objects
+// Define the interface for invitation objects (matches DB snake_case)
 interface Invitation {
   id: string;
   token: string;
   email: string;
   status: string;
   message?: string;
-  expiresAt: string;
-  createdAt: string;
-  householdId: string;
-  inviterId: string;
-  role: string;
+  expires_at: string;
+  created_at: string;
+  household_id: string;
+  invited_by: string;
+  // Map to camelCase for component usage
+  householdId?: string;
+  role?: string;
   inviter?: {
     id: string;
     name: string;
@@ -27,7 +29,6 @@ interface Invitation {
   household?: {
     id: string;
     name: string;
-    address?: string;
   };
 }
 
@@ -57,15 +58,11 @@ export default function PendingInvitationsPanel() {
         
         console.log('Current user email:', userEmail);
         
-        // Direct query to get all pending invitations
+        // Direct query to get all pending invitations (simplified - no joins)
         const { data: allInvitations, error: queryError } = await supabaseClient
-          .from('Invitation')
-          .select(`
-            *,
-            inviter:inviterId(id, name, email),
-            household:householdId(id, name, address)
-          `)
-          .eq('status', 'PENDING');
+          .from('invitations')
+          .select('*')
+          .eq('status', 'pending');
         
         if (queryError) {
           console.error('Supabase query error:', queryError);
@@ -109,37 +106,34 @@ export default function PendingInvitationsPanel() {
       
       // First update the invitation status
       const { error: updateError } = await supabaseClient
-        .from('Invitation')
+        .from('invitations')
         .update({
-          status: 'ACCEPTED',
-          updatedAt: new Date().toISOString(),
-          respondedAt: new Date().toISOString()
+          status: 'accepted',
+          updated_at: new Date().toISOString(),
+          accepted_at: new Date().toISOString()
         })
         .eq('id', invitation.id);
-        
+
       if (updateError) {
         throw updateError;
       }
-      
+
       // Then add user to the household
       const { data: sessionData } = await supabaseClient.auth.getSession();
       if (!sessionData.session?.user?.id) {
         throw new Error('User not authenticated');
       }
-      
+
       const userId = sessionData.session.user.id;
-      const membershipId = crypto.randomUUID();
-      
+
       const { error: membershipError } = await supabaseClient
-        .from('HouseholdUser')
+        .from('household_members')
         .insert({
-          id: membershipId,
-          userId: userId,
-          householdId: invitation.householdId,
-          role: invitation.role,
-          joinedAt: new Date().toISOString()
+          user_id: userId,
+          household_id: invitation.household_id,
+          role: 'member' // Default role for invited members
         });
-        
+
       if (membershipError) {
         throw membershipError;
       }
@@ -240,7 +234,7 @@ export default function PendingInvitationsPanel() {
                   Sent to: {invitation.email}
                 </p>
                 <p className="text-sm text-gray-600 dark:text-gray-400">
-                  Role: {invitation.role?.charAt(0)?.toUpperCase() + invitation.role?.slice(1)?.toLowerCase() || 'Member'}
+                  Role: {invitation.role ? invitation.role.charAt(0).toUpperCase() + invitation.role.slice(1).toLowerCase() : 'Member'}
                 </p>
                 {invitation.message && (
                   <p className="text-sm italic mt-2 text-gray-600 dark:text-gray-400">

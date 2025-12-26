@@ -18,7 +18,7 @@ export async function POST(request: NextRequest) {
 
     // Find the user by email
     const { data: user, error: userError } = await supabase
-      .from('User')
+      .from('profiles')
       .select('id, email, name, password, avatar')
       .eq('email', email)
       .single();

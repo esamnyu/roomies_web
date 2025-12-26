@@ -11,8 +11,8 @@ interface Invitation {
   role: string;
   status: string;
   message?: string;
-  expiresAt: string;
-  createdAt: string;
+  expires_at: string;
+  created_at: string;
   inviter?: {
     id: string;
     name: string;
@@ -163,8 +163,8 @@ export default function PendingInvitations({
               
               <div className="text-sm text-gray-500 dark:text-gray-400 mt-1">
                 <p>Role: {invitation.role.charAt(0) + invitation.role.slice(1).toLowerCase()}</p>
-                <p>Sent: {formatDate(invitation.createdAt, true)}</p>
-                <p>Expires: {formatDate(invitation.expiresAt)}</p>
+                <p>Sent: {formatDate(invitation.created_at, true)}</p>
+                <p>Expires: {formatDate(invitation.expires_at)}</p>
               </div>
               
               {invitation.message && (

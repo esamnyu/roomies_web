@@ -1,7 +1,7 @@
 // src/app/(dashboard)/dashboard/page.tsx
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import HouseholdInfo from '@/components/dashboard/HouseholdInfo';
 import MemberGrid from '@/components/dashboard/MemberGrid';
@@ -10,7 +10,20 @@ import Link from 'next/link';
 import InviteModal from '@/components/invitations/InviteModal';
 import { supabaseClient } from '@/lib/supabase';
 
-export default function DashboardPage() {
+// Component that uses searchParams (needs Suspense)
+function WelcomeMessageHandler({ onVerified }: { onVerified: () => void }) {
+  const searchParams = useSearchParams();
+
+  useEffect(() => {
+    if (searchParams.get('verified') === 'true') {
+      onVerified();
+    }
+  }, [searchParams, onVerified]);
+
+  return null;
+}
+
+function DashboardContent() {
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState('MEMBER');
@@ -38,30 +51,30 @@ export default function DashboardPage() {
         
         if (session) {
           // Get the user's primary household
-          const { data: householdUser, error } = await supabaseClient
-            .from('HouseholdUser')
-            .select('householdId')
-            .eq('userId', session.user.id)
-            .order('joinedAt', { ascending: false })
+          const { data: householdMember, error } = await supabaseClient
+            .from('household_members')
+            .select('household_id')
+            .eq('user_id', session.user.id)
+            .order('joined_at', { ascending: false })
             .limit(1)
             .single();
-          
-          if (!error && householdUser) {
-            console.log('Found household ID:', householdUser.householdId);
-            setCurrentHouseholdId(householdUser.householdId);
-            
+
+          if (!error && householdMember) {
+            console.log('Found household ID:', householdMember.household_id);
+            setCurrentHouseholdId(householdMember.household_id);
+
             // Fetch household details
             const { data: householdData } = await supabaseClient
-              .from('Household')
+              .from('households')
               .select('*')
-              .eq('id', householdUser.householdId)
+              .eq('id', householdMember.household_id)
               .single();
               
             if (householdData) {
               setHousehold({
                 name: householdData.name || '',
                 address: householdData.address || '',
-                moveInDate: householdData.createdAt ? new Date(householdData.createdAt).toLocaleDateString() : '',
+                moveInDate: householdData.created_at ? new Date(householdData.created_at).toLocaleDateString() : '',
                 memberCount: 0,  // Will be updated when members are fetched
                 pendingExpenses: 0,
                 upcomingTasks: 0,
@@ -125,21 +138,14 @@ export default function DashboardPage() {
     fetchMembers();
   }, [currentHouseholdId]);
   
-  const searchParams = useSearchParams();
-  
-  // Check if user just verified their account
-  useEffect(() => {
-    if (searchParams.get('verified') === 'true') {
-      setShowWelcomeMessage(true);
-      
-      // Auto-hide the welcome message after 8 seconds
-      const timer = setTimeout(() => {
-        setShowWelcomeMessage(false);
-      }, 8000);
-      
-      return () => clearTimeout(timer);
-    }
-  }, [searchParams]);
+  // Handle verified callback with auto-hide
+  const handleVerified = () => {
+    setShowWelcomeMessage(true);
+    // Auto-hide the welcome message after 8 seconds
+    setTimeout(() => {
+      setShowWelcomeMessage(false);
+    }, 8000);
+  };
 
   const handleInviteSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -152,6 +158,11 @@ export default function DashboardPage() {
 
   return (
     <div>
+      {/* Handle search params in Suspense */}
+      <Suspense fallback={null}>
+        <WelcomeMessageHandler onVerified={handleVerified} />
+      </Suspense>
+
       {/* Verification Welcome Message */}
       {showWelcomeMessage && (
         <div className="mb-6 p-4 bg-green-50 dark:bg-green-900 rounded-lg border border-green-200 dark:border-green-800 shadow-md">
@@ -362,10 +373,9 @@ export default function DashboardPage() {
             </div>
           </div>
         ) : (
-          <MemberGrid 
+          <MemberGrid
             householdId={currentHouseholdId}
-            members={members}
-            onInvite={() => setShowInviteModal(true)} 
+            onInvite={() => setShowInviteModal(true)}
           />
         )
       ) : (
@@ -378,11 +388,15 @@ export default function DashboardPage() {
 
       {/* Invite Modal - Using the new component */}
       {showInviteModal && (
-        <InviteModal 
+        <InviteModal
           householdId={currentHouseholdId}
           onClose={() => setShowInviteModal(false)}
         />
       )}
     </div>
   );
+}
+
+export default function DashboardPage() {
+  return <DashboardContent />;
 }

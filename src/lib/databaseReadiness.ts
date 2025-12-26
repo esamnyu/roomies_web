@@ -2,39 +2,39 @@
 import { supabaseClient } from './supabase';
 
 /**
- * Check if the Message table is ready to use
+ * Check if the messages table is ready to use
  * @returns {Promise<boolean>} True if the table exists and is accessible
  */
 export async function isMessageTableReady(): Promise<boolean> {
   try {
-    console.log('Checking if Message table is ready...');
-    
+    console.log('Checking if messages table is ready...');
+
     // Get the current user session first to ensure authenticated
     const { data: { session } } = await supabaseClient.auth.getSession();
     if (!session) {
       console.error('No active session for database check');
       return false;
     }
-    
-    // Try to select a single record from the Message table
+
+    // Try to select a single record from the messages table
     const { data, error } = await supabaseClient
-      .from('Message')
+      .from('messages')
       .select('id')
       .limit(1);
-    
-    console.log('Message table check result:', { data, error });
-    
+
+    console.log('messages table check result:', { data, error });
+
     // If there's no error, the table exists and is accessible
     if (!error) {
-      console.log('Message table is ready to use');
+      console.log('messages table is ready to use');
       return true;
     }
-    
+
     // Log the specific error
-    console.error('Message table not ready:', error.message, error.details, error.hint, error.code);
+    console.error('messages table not ready:', error.message, error.details, error.hint, error.code);
     return false;
   } catch (err) {
-    console.error('Error checking Message table:', err);
+    console.error('Error checking messages table:', err);
     return false;
   }
 }
@@ -46,7 +46,7 @@ export async function isMessageTableReady(): Promise<boolean> {
 export async function areAllChatTablesReady(): Promise<{ready: boolean, tables: Record<string, boolean>}> {
   try {
     console.log('Checking if all chat tables are ready...');
-    
+
     // Get the current user's session
     const { data: { session } } = await supabaseClient.auth.getSession();
     if (!session) {
@@ -54,52 +54,47 @@ export async function areAllChatTablesReady(): Promise<{ready: boolean, tables: 
       return {
         ready: false,
         tables: {
-          message: false,
-          messageReadReceipt: false
+          messages: false,
+          conversations: false
         }
       };
     }
-    
+
     console.log('User session found:', session.user.id);
-    
-    // Check if Message table is ready
-    const isMessageReady = await isMessageTableReady();
-    
-    // Check MessageReadReceipt table
-    console.log('Checking if MessageReadReceipt table is ready...');
-    const { data: receiptData, error: receiptError } = await supabaseClient
-      .from('MessageReadReceipt')
+
+    // Check if messages table is ready
+    const isMessagesReady = await isMessageTableReady();
+
+    // Check conversations table
+    console.log('Checking if conversations table is ready...');
+    const { error: conversationsError } = await supabaseClient
+      .from('conversations')
       .select('id')
       .limit(1);
-    
-    console.log('MessageReadReceipt table check result:', { receiptData, receiptError });
-    
-    const isReceiptReady = !receiptError;
-    if (isReceiptReady) {
-      console.log('MessageReadReceipt table is ready to use');
+
+    const isConversationsReady = !conversationsError;
+    if (isConversationsReady) {
+      console.log('conversations table is ready to use');
     } else {
-      console.error('MessageReadReceipt table not ready:', 
-        receiptError?.message, 
-        receiptError?.details, 
-        receiptError?.hint,
-        receiptError?.code
+      console.error('conversations table not ready:',
+        conversationsError?.message
       );
     }
-    
+
     // Overall readiness status
-    const allReady = isMessageReady && isReceiptReady;
-    
+    const allReady = isMessagesReady && isConversationsReady;
+
     console.log('Chat tables readiness summary:', {
       ready: allReady,
-      message: isMessageReady,
-      messageReadReceipt: isReceiptReady
+      messages: isMessagesReady,
+      conversations: isConversationsReady
     });
-    
+
     return {
       ready: allReady,
       tables: {
-        message: isMessageReady,
-        messageReadReceipt: isReceiptReady
+        messages: isMessagesReady,
+        conversations: isConversationsReady
       }
     };
   } catch (err) {
@@ -107,8 +102,8 @@ export async function areAllChatTablesReady(): Promise<{ready: boolean, tables: 
     return {
       ready: false,
       tables: {
-        message: false,
-        messageReadReceipt: false
+        messages: false,
+        conversations: false
       }
     };
   }

@@ -3,16 +3,16 @@
 
 import { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
-import { useSession } from 'next-auth/react';
-import ExpenseForm from '@/components/expenses/ExpenseForm'; 
-import PaymentMatrix from '@/components/expenses/PaymentMatrix'; 
-import { 
-  fetchExpenses, 
-  fetchHouseholdMembers, 
-  createExpense, 
-  updateExpense, 
-  deleteExpense, 
-  updatePaymentStatus 
+import { supabaseClient } from '@/lib/supabase';
+import ExpenseForm from '@/components/expenses/ExpenseForm';
+import PaymentMatrix from '@/components/expenses/PaymentMatrix';
+import {
+  fetchExpenses,
+  fetchHouseholdMembers,
+  createExpense,
+  updateExpense,
+  deleteExpense,
+  updatePaymentStatus
 } from '@/lib/services/expenseService';
 
 // Define types matching the props expected by ExpenseForm
@@ -23,12 +23,12 @@ interface Member {
 }
 
 interface Payment {
-  id: string; // Add id for backend reference
+  id?: string; // Optional for new payments
   userId: string;
   userName: string;
   amount: number;
   status: 'PENDING' | 'COMPLETED' | 'DECLINED';
-  expenseId: string; // Add reference to parent expense
+  expenseId?: string; // Optional reference to parent expense
 }
 
 interface Split {
@@ -64,12 +64,9 @@ interface Balance {
 
 export default function ExpensesPage() {
   const params = useParams();
-  const { data: session } = useSession();
-  const currentUserId = session?.user?.id;
-  
-  // Get householdId from route or user's default household
-  const householdId = params?.householdId as string || '1'; // Fallback to '1' if not in route
-  
+  const [currentUserId, setCurrentUserId] = useState<string | undefined>(undefined);
+  const [householdId, setHouseholdId] = useState<string | null>(params?.householdId as string || null);
+
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
   const [showExpenseForm, setShowExpenseForm] = useState(false);
@@ -78,25 +75,56 @@ export default function ExpensesPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Get current user and their household from Supabase auth
+  useEffect(() => {
+    const getUser = async () => {
+      const { data: { session } } = await supabaseClient.auth.getSession();
+      if (session?.user?.id) {
+        setCurrentUserId(session.user.id);
+
+        // If no householdId from params, get user's primary household
+        if (!householdId) {
+          const { data: membership } = await supabaseClient
+            .from('household_members')
+            .select('household_id')
+            .eq('user_id', session.user.id)
+            .order('joined_at', { ascending: false })
+            .limit(1)
+            .single();
+
+          if (membership?.household_id) {
+            setHouseholdId(membership.household_id);
+          }
+        }
+      }
+    };
+    getUser();
+  }, [householdId]);
+
   // Fetch data when component mounts or householdId changes
   useEffect(() => {
     const loadData = async () => {
+      if (!householdId) {
+        setIsLoading(false);
+        return;
+      }
+
       setIsLoading(true);
       setError(null);
-      
+
       try {
         // Fetch expenses and members in parallel
         const [expensesData, membersData] = await Promise.all([
           fetchExpenses(householdId),
           fetchHouseholdMembers(householdId)
         ]);
-        
+
         // Convert dates from strings to Date objects
         const formattedExpenses = expensesData.map((expense: any) => ({
           ...expense,
           date: new Date(expense.date)
         }));
-        
+
         setExpenses(formattedExpenses);
         setMembers(membersData);
       } catch (err) {
@@ -283,11 +311,7 @@ export default function ExpensesPage() {
       {/* Payment Summary */}
       <div className="mb-8">
          <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">Payment Summary</h2>
-         {balances.length > 0 ? (
-           <PaymentMatrix balances={balances} />
-         ) : (
-           <p className="text-sm text-gray-500 dark:text-gray-400">No balance data available yet.</p>
-         )}
+         {householdId && <PaymentMatrix householdId={householdId} />}
       </div>
 
       {/* Expenses List */}
@@ -336,9 +360,9 @@ export default function ExpensesPage() {
                          </td>
                          <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">{/* Action Buttons */}
                             <div className="flex justify-end space-x-2">
-                              {needsToPay && (<button onClick={() => handleMarkAsPaid(expense.id, currentUserId)} className="text-green-600 hover:text-green-900 dark:text-green-400 dark:hover:text-green-300" title="Mark your share as paid">Mark Paid</button>)}
+                              {needsToPay && expense.id && currentUserId && (<button onClick={() => handleMarkAsPaid(expense.id!, currentUserId)} className="text-green-600 hover:text-green-900 dark:text-green-400 dark:hover:text-green-300" title="Mark your share as paid">Mark Paid</button>)}
                               <button onClick={() => handleEditExpense(expense)} className="text-blue-600 hover:text-blue-900 dark:text-blue-400 dark:hover:text-blue-300">Edit</button>
-                              <button onClick={() => handleDeleteExpense(expense.id)} className="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300">Delete</button>
+                              {expense.id && <button onClick={() => handleDeleteExpense(expense.id!)} className="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300">Delete</button>}
                             </div>
                          </td>
                        </tr>
@@ -355,7 +379,7 @@ export default function ExpensesPage() {
       </div>
 
       {/* Expense Form Modal */}
-      {showExpenseForm && (
+      {showExpenseForm && householdId && (
          <div className="fixed inset-0 z-50 overflow-y-auto">
            <div className="flex items-center justify-center min-h-screen px-4">
               {/* Background overlay */}

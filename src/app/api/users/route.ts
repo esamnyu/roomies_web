@@ -18,15 +18,15 @@ export async function POST(request: NextRequest) {
     // Create the user record in your database
     // Note: Password is already stored in Supabase Auth
     const { data: newUser, error: insertError } = await supabase
-      .from('User')
+      .from('profiles')
       .insert([
         {
           id, // Use the ID provided by Supabase Auth
           name,
           email,
           password: 'MANAGED_BY_SUPABASE_AUTH', // Placeholder - password is managed by Auth service
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
         }
       ])
       .select('id, name, email, avatar, createdAt, updatedAt')

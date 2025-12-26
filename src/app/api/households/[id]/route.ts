@@ -1,9 +1,7 @@
 // src/app/api/households/[id]/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-// Removed Prisma import
-// import { prisma } from '@/lib/prisma';
 import { getServerSession } from 'next-auth';
-import { authOptions } from '@/app/api/auth/[...nextauth]/route'; // Ensure this path is correct
+import { authOptions } from '@/lib/auth-options'; // Ensure this path is correct
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 
@@ -44,10 +42,10 @@ async function createSupabaseRouteHandlerClient() {
 // Returns { authorized: boolean, membership?: any, error?: string, status?: number }
 async function checkHouseholdAccess(supabase: any, householdId: string, userId: string, requireAdmin = false) {
     const { data: membership, error } = await supabase
-      .from('HouseholdUser')
+      .from('household_members')
       .select('userId, role') // Select role for admin check
-      .eq('userId', userId)
-      .eq('householdId', householdId)
+      .eq('user_id', userId)
+      .eq('household_id', householdId)
       .single(); // Expecting one record or null/error
 
     if (error) {
@@ -73,7 +71,7 @@ async function checkHouseholdAccess(supabase: any, householdId: string, userId: 
 // GET /api/households/[id] - Get a specific household's details
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   const supabase = createSupabaseRouteHandlerClient();
   try {
@@ -81,7 +79,7 @@ export async function GET(
     if (sessionError) throw new Error(sessionError.message);
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const householdId = params.id;
+    const { id: householdId } = await params;
     if (!householdId) return NextResponse.json({ error: 'Household ID is required' }, { status: 400 });
 
     // 1. Check if user is a member of the household
@@ -93,7 +91,7 @@ export async function GET(
     // 2. Get the household with related data (basic example)
     // Fetching limited/filtered related data might require multiple queries or a DB function
     const { data: household, error: fetchError } = await (await supabase)
-      .from('Household')
+      .from('households')
       .select(`
         *,
         members:HouseholdUser(
@@ -136,7 +134,7 @@ export async function GET(
 // PATCH /api/households/[id] - Update a specific household
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   const supabase = createSupabaseRouteHandlerClient();
   try {
@@ -144,7 +142,7 @@ export async function PATCH(
     if (sessionError) throw new Error(sessionError.message);
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const householdId = params.id;
+    const { id: householdId } = await params;
     if (!householdId) return NextResponse.json({ error: 'Household ID is required' }, { status: 400 });
 
     // 1. Check if user is an ADMIN of the household
@@ -158,8 +156,8 @@ export async function PATCH(
     const { name, address } = body;
 
     // Prepare update data, only include fields that are provided
-    const updateData: { name?: string, address?: string | null, updatedAt: string } = {
-        updatedAt: new Date().toISOString() // Always update updatedAt timestamp
+    const updateData: { name?: string, address?: string | null, updated_at: string } = {
+        updated_at: new Date().toISOString() // Always update updatedAt timestamp
     };
     if (name !== undefined) {
         if (typeof name !== 'string' || name.trim() === '') {
@@ -182,7 +180,7 @@ export async function PATCH(
 
     // 3. Update the household
     const { data: updatedHousehold, error: updateError } = await (await supabase)
-      .from('Household')
+      .from('households')
       .update(updateData)
       .eq('id', householdId)
       .select() // Select the updated household data
@@ -213,7 +211,7 @@ export async function PATCH(
 // DELETE /api/households/[id] - Delete a specific household
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
     const supabase = createSupabaseRouteHandlerClient();
     try {
@@ -221,7 +219,7 @@ export async function DELETE(
       if (sessionError) throw new Error(sessionError.message);
       if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-      const householdId = params.id;
+      const { id: householdId } = await params;
       if (!householdId) return NextResponse.json({ error: 'Household ID is required' }, { status: 400 });
 
       // 1. Check if user is an ADMIN of the household
@@ -232,9 +230,9 @@ export async function DELETE(
 
       // 2. Count members - prevent deletion if other members exist (safer default)
       const { count: membersCount, error: countError } = await (await supabase)
-        .from('HouseholdUser')
+        .from('household_members')
         .select('*', { count: 'exact', head: true })
-        .eq('householdId', householdId);
+        .eq('household_id', householdId);
 
       if (countError) {
            console.error('Error counting household members:', countError);
@@ -260,7 +258,7 @@ export async function DELETE(
       const { data: expensesToDelete, error: expenseIdsError } = await (await supabase)
         .from('Expense')
         .select('id')
-        .eq('householdId', householdId);
+        .eq('household_id', householdId);
 
       if (expenseIdsError) {
         console.error("Error fetching expense IDs for deletion:", expenseIdsError);
@@ -287,21 +285,21 @@ export async function DELETE(
 
       // ... add deletes for Task, Message, HouseRule, Invitation, etc. ...
       // Example:
-      const { error: deleteTasksError } = await (await supabase).from('Task').delete().eq('householdId', householdId);
+      const { error: deleteTasksError } = await (await supabase).from('Task').delete().eq('household_id', householdId);
       if (deleteTasksError) console.error("Error deleting Tasks:", deleteTasksError);
 
-      const { error: deleteMessagesError } = await (await supabase).from('Message').delete().eq('householdId', householdId);
+      const { error: deleteMessagesError } = await (await supabase).from('messages').delete().eq('household_id', householdId);
        if (deleteMessagesError) console.error("Error deleting Messages:", deleteMessagesError);
 
-       const { error: deleteRulesError } = await (await supabase).from('HouseRule').delete().eq('householdId', householdId);
+       const { error: deleteRulesError } = await (await supabase).from('HouseRule').delete().eq('household_id', householdId);
        if (deleteRulesError) console.error("Error deleting HouseRules:", deleteRulesError);
 
-       const { error: deleteInvitesError } = await (await supabase).from('Invitation').delete().eq('householdId', householdId);
+       const { error: deleteInvitesError } = await (await supabase).from('invitations').delete().eq('household_id', householdId);
        if (deleteInvitesError) console.error("Error deleting Invitations:", deleteInvitesError);
 
 
       // Finally, delete HouseholdUser entries (should only be the admin left)
-      const { error: deleteMembersError } = await (await supabase).from('HouseholdUser').delete().eq('householdId', householdId);
+      const { error: deleteMembersError } = await (await supabase).from('household_members').delete().eq('household_id', householdId);
        if (deleteMembersError) {
             console.error("Error deleting HouseholdUsers:", deleteMembersError);
             // This is critical, if this fails, the household delete might fail too.
@@ -311,7 +309,7 @@ export async function DELETE(
 
       // 4. Delete the household itself
       const { data: deletedHousehold, error: deleteHouseholdError } = await (await supabase)
-        .from('Household')
+        .from('households')
         .delete()
         .eq('id', householdId)
         .select() // Optionally select the deleted row (or just check error)

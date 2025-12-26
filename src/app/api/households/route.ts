@@ -2,7 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { getServerSession } from 'next-auth';
-import { authOptions } from '@/app/api/auth/[...nextauth]/route';
+import { authOptions } from '@/lib/auth-options';
 
 // Define types to match the actual structure returned by Supabase
 interface User {
@@ -16,8 +16,8 @@ interface Household {
   id: string;
   name: string;
   address?: string | null;
-  createdAt: string;
-  updatedAt: string;
+  created_at: string;
+  updated_at: string;
 }
 
 interface HouseholdUser {
@@ -25,7 +25,7 @@ interface HouseholdUser {
   userId: string;
   householdId: string;
   role: 'ADMIN' | 'MEMBER' | 'GUEST';
-  joinedAt: string;
+  joined_at: string;
   household: Household;
   user?: User;
 }
@@ -52,7 +52,7 @@ export async function GET(request: NextRequest) {
     
     // Get all households the user is a member of
     const { data: householdUsers, error: userError } = await supabase
-      .from('HouseholdUser')
+      .from('household_members')
       .select(`
         id,
         userId,
@@ -67,8 +67,8 @@ export async function GET(request: NextRequest) {
           updatedAt
         )
       `)
-      .eq('userId', session.user.id)
-      .order('joinedAt', { ascending: false });
+      .eq('user_id', session.user.id)
+      .order('joined_at', { ascending: false });
     
     if (userError || !householdUsers) {
       console.error('Error fetching household memberships:', userError);
@@ -83,34 +83,34 @@ export async function GET(request: NextRequest) {
       
       // Get member count
       const memberCountResult = await supabase
-        .from('HouseholdUser')
+        .from('household_members')
         .select('*', { count: 'exact', head: true })
-        .eq('householdId', householdId);
+        .eq('household_id', householdId);
       
       // Get counts for related entities
       const expenseCountResult = await supabase
         .from('Expense')
         .select('*', { count: 'exact', head: true })
-        .eq('householdId', householdId);
+        .eq('household_id', householdId);
       
       const taskCountResult = await supabase
         .from('Task')
         .select('*', { count: 'exact', head: true })
-        .eq('householdId', householdId);
+        .eq('household_id', householdId);
       
       const messageCountResult = await supabase
-        .from('Message')
+        .from('messages')
         .select('*', { count: 'exact', head: true })
-        .eq('householdId', householdId);
+        .eq('household_id', householdId);
       
       const ruleCountResult = await supabase
         .from('HouseRule')
         .select('*', { count: 'exact', head: true })
-        .eq('householdId', householdId);
+        .eq('household_id', householdId);
       
       // Get first 5 members with details
       const { data: membersData, error: memberFetchError } = await supabase
-        .from('HouseholdUser')
+        .from('household_members')
         .select(`
           id,
           role,
@@ -120,7 +120,7 @@ export async function GET(request: NextRequest) {
             avatar
           )
         `)
-        .eq('householdId', householdId)
+        .eq('household_id', householdId)
         .limit(5);
       
       if (memberFetchError) {
@@ -143,10 +143,10 @@ export async function GET(request: NextRequest) {
         id: household?.id,
         name: household?.name,
         address: household?.address,
-        createdAt: household?.createdAt,
-        updatedAt: household?.updatedAt,
+        created_at: household?.created_at,
+        updated_at: household?.updated_at,
         role: hu.role,
-        joinedAt: hu.joinedAt,
+        joined_at: hu.joined_at,
         memberCount: memberCountResult.count || 0,
         expenseCount: expenseCountResult.count || 0,
         taskCount: taskCountResult.count || 0,
@@ -181,13 +181,13 @@ export async function POST(request: NextRequest) {
     
     // Create the household
     const { data: household, error: householdError } = await supabase
-      .from('Household')
+      .from('households')
       .insert([
         {
           name,
           address,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
         }
       ])
       .select('*')
@@ -200,13 +200,13 @@ export async function POST(request: NextRequest) {
     
     // Add the current user as an admin of the household
     const { error: memberError } = await supabase
-      .from('HouseholdUser')
+      .from('household_members')
       .insert([
         {
           userId: session.user.id,
           householdId: household.id,
           role: 'ADMIN',
-          joinedAt: new Date().toISOString()
+          joined_at: new Date().toISOString()
         }
       ]);
     
@@ -214,14 +214,14 @@ export async function POST(request: NextRequest) {
       console.error('Error adding user to household:', memberError);
       
       // Try to delete the household since adding the user failed
-      await supabase.from('Household').delete().eq('id', household.id);
+      await supabase.from('households').delete().eq('id', household.id);
       
       return NextResponse.json({ error: 'Failed to create household membership' }, { status: 500 });
     }
     
     // Get the full household data with the member
     const { data: fullHouseholdData, error: fetchError } = await supabase
-      .from('Household')
+      .from('households')
       .select(`
         id,
         name,

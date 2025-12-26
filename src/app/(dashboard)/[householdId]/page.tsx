@@ -1,16 +1,16 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, use } from 'react';
 import { useRouter } from 'next/navigation';
 import HouseholdMembers from '@/components/dashboard/HouseholdMembers';
 import { useAuth } from '@/context/AuthContext';
 
-export default function MembersPage({ params }: { params: { householdId: string } }) {
+export default function MembersPage({ params }: { params: Promise<{ householdId: string }> }) {
   const router = useRouter();
   const { user } = useAuth();
-  
-  // Extract and validate household ID
-  const householdId = params?.householdId;
+
+  // Unwrap params Promise (Next.js 15 pattern)
+  const { householdId } = use(params);
   
   const [members, setMembers] = useState([]);
   const [loading, setLoading] = useState(true);

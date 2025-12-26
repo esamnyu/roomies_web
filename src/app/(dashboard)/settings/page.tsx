@@ -2,13 +2,24 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
+import { supabaseClient } from '@/lib/supabase';
 import Card from '@/components/ui/Card';
 
 export default function SettingsPage() {
-  const { data: session, status } = useSession();
   const router = useRouter();
+  const [user, setUser] = useState<any>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
+  // Get current user from Supabase auth
+  useEffect(() => {
+    const getUser = async () => {
+      const { data: { session } } = await supabaseClient.auth.getSession();
+      setUser(session?.user || null);
+      setAuthLoading(false);
+    };
+    getUser();
+  }, []);
   
   // Theme settings
   const [theme, setTheme] = useState<'light' | 'dark' | 'system'>('system');
@@ -159,8 +170,8 @@ export default function SettingsPage() {
       // For demo purposes, create a dummy JSON
       const userData = {
         profile: {
-          name: session?.user?.name,
-          email: session?.user?.email,
+          name: user?.user_metadata?.name || user?.email,
+          email: user?.email,
         },
         settings: {
           theme,
@@ -186,7 +197,7 @@ export default function SettingsPage() {
     }
   };
   
-  if (status === 'loading') {
+  if (authLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>

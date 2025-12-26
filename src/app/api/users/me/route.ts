@@ -1,9 +1,7 @@
 // src/app/api/users/me/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-// Removed Prisma import
-// import { prisma } from '@/lib/prisma';
 import { getServerSession } from 'next-auth';
-import { authOptions } from '@/app/api/auth/[...nextauth]/route'; // Ensure path is correct
+import { authOptions } from '@/lib/auth-options'; // Ensure path is correct
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 // Import the admin client for Supabase Auth user deletion
@@ -38,7 +36,7 @@ export async function GET(request: NextRequest) {
 
     // 1. Get the user's core details
     const { data: user, error: userError } = await supabase
-      .from('User')
+      .from('profiles')
       .select('id, name, email, avatar, createdAt') // Select columns from your User table
       .eq('id', userId)
       .single();
@@ -54,14 +52,14 @@ export async function GET(request: NextRequest) {
 
     // 2. Get household memberships with household details
     const { data: memberships, error: membershipsError } = await supabase
-        .from('HouseholdUser')
+        .from('household_members')
         .select(`
             role,
             joinedAt,
             household:Household!inner(id, name, address, createdAt)
         `)
-        .eq('userId', userId)
-        .order('joinedAt', { referencedTable: 'HouseholdUser', ascending: false }); // Order by joinedAt in HouseholdUser
+        .eq('user_id', userId)
+        .order('joined_at', { referencedTable: 'HouseholdUser', ascending: false }); // Order by joinedAt in HouseholdUser
 
      if (membershipsError) {
         console.error("Error fetching user households:", membershipsError);
@@ -72,13 +70,13 @@ export async function GET(request: NextRequest) {
      const { count: paymentCount, error: paymentCountError } = await supabase
         .from('Payment')
         .select('*', { count: 'exact', head: true })
-        .eq('userId', userId);
+        .eq('user_id', userId);
      if(paymentCountError) console.error("Error counting payments:", paymentCountError);
 
       const { count: expenseCreatedCount, error: expenseCountError } = await supabase
         .from('Expense')
         .select('*', { count: 'exact', head: true })
-        .eq('creatorId', userId);
+        .eq('created_by', userId);
       if(expenseCountError) console.error("Error counting created expenses:", expenseCountError);
 
        // Task count might be less critical for expense MVP, include if needed
@@ -97,7 +95,7 @@ export async function GET(request: NextRequest) {
       name: user.name,
       email: user.email,
       avatar: user.avatar,
-      createdAt: user.createdAt,
+      created_at: user.createdAt,
       // Include actual settings if stored, otherwise omit or use defaults
       // settings: { ... },
       statistics: {
@@ -108,15 +106,18 @@ export async function GET(request: NextRequest) {
         // Add other relevant counts here
       },
       // Map memberships, handle potential null from error
-      households: (memberships || []).map(m => ({
-        // Ensure 'household' object is not null before accessing its properties
-        id: m.household?.id,
-        name: m.household?.name,
-        address: m.household?.address,
-        createdAt: m.household?.createdAt,
-        joinedAt: m.joinedAt,
-        role: m.role,
-      })).filter(h => h.id), // Filter out any potential null households if join failed
+      // Supabase types foreign key joins as arrays, handle both cases
+      households: (memberships || []).map(m => {
+        const household = Array.isArray(m.household) ? m.household[0] : m.household;
+        return {
+          id: household?.id,
+          name: household?.name,
+          address: household?.address,
+          created_at: household?.createdAt,
+          joined_at: m.joinedAt,
+          role: m.role,
+        };
+      }).filter(h => h.id), // Filter out any potential null households if join failed
     };
 
     return NextResponse.json(userData);
@@ -147,11 +148,11 @@ export async function DELETE(request: NextRequest) {
     // --- Sole Admin Check ---
     // 1. Get households where the user is ADMIN
     const { data: adminMemberships, error: adminCheckError } = await supabase
-        .from('HouseholdUser')
+        .from('household_members')
         // Select householdId and name for error message
         .select('householdId, household:Household!inner(id, name)') // Fetch household data
-        .eq('userId', userId)
-        .eq('role', 'ADMIN');
+        .eq('user_id', userId)
+        .eq('role', 'admin');
 
     if (adminCheckError) {
          console.error("Error fetching admin memberships:", adminCheckError);
@@ -163,20 +164,21 @@ export async function DELETE(request: NextRequest) {
         const problematicHouseholds = [];
         for (const membership of adminMemberships) {
             // --- Incorporating the fix ---
-            const household = membership.household; // Assign to intermediate variable
-            if (!household) {
+            // Supabase types foreign key joins as arrays, handle both cases
+            const householdData = Array.isArray(membership.household) ? membership.household[0] : membership.household;
+            if (!householdData) {
                 console.warn(`Membership record found for user ${userId} but household data is missing.`);
                 continue;
             }
             const householdId = membership.householdId;
-            const householdName = household.name; // Use the intermediate variable
+            const householdName = householdData.name; // Use the intermediate variable
             // --- End Fix ---
 
             // Count total members in this household
              const { count: totalMemberCount, error: totalCountErr } = await supabase
-                .from('HouseholdUser')
+                .from('household_members')
                 .select('*', { count: 'exact', head: true })
-                .eq('householdId', householdId);
+                .eq('household_id', householdId);
 
              if (totalCountErr || totalMemberCount === null) {
                 console.error(`Error counting total members for household ${householdId}:`, totalCountErr);
@@ -188,10 +190,10 @@ export async function DELETE(request: NextRequest) {
              if (totalMemberCount > 1) {
                  // Count *other* admins in this household
                  const { count: otherAdminCount, error: otherAdminErr } = await supabase
-                    .from('HouseholdUser')
+                    .from('household_members')
                     .select('*', { count: 'exact', head: true })
-                    .eq('householdId', householdId)
-                    .eq('role', 'ADMIN')
+                    .eq('household_id', householdId)
+                    .eq('role', 'admin')
                     .neq('userId', userId); // Exclude the current user
 
                  if (otherAdminErr || otherAdminCount === null) {
@@ -224,9 +226,9 @@ export async function DELETE(request: NextRequest) {
     // 1. Delete HouseholdUser memberships
     console.warn(`Deleting HouseholdUser records for user ${userId}.`);
     const { error: deleteMembershipsError } = await supabase
-        .from('HouseholdUser')
+        .from('household_members')
         .delete()
-        .eq('userId', userId);
+        .eq('user_id', userId);
     if (deleteMembershipsError) {
         console.error("Error deleting user memberships:", deleteMembershipsError);
         // Proceeding anyway for MVP, but this is risky
@@ -246,7 +248,7 @@ export async function DELETE(request: NextRequest) {
     // 3. Delete the user from the 'User' table
     console.warn(`Deleting user record from User table for ${userId}.`);
     const { error: deleteUserTableError } = await supabase
-        .from('User')
+        .from('profiles')
         .delete()
         .eq('id', userId);
      if (deleteUserTableError) {

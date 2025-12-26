@@ -54,32 +54,32 @@ const createSupabaseClient = async () => {
     }
 }
 
-// --- Interfaces (kept as is) ---
-interface UserData {
+// --- Interfaces (updated for Supabase snake_case) ---
+interface ProfileData {
     id: string;
     name: string;
     email: string;
-    avatar: string | null;
-    createdAt: string; // Assuming User table provides this
+    avatar_url: string | null;
+    created_at: string;
 }
 
 interface HouseholdMemberQueryResult {
-    id: string; // HouseholdUser ID
-    userId: string;
+    id: string; // household_members ID
+    user_id: string;
     role: string;
-    joinedAt: string;
-    user: UserData | null; // User might be null if join fails or user deleted
+    joined_at: string;
+    profiles: ProfileData | null; // Profile might be null if join fails or user deleted
 }
 
 interface FormattedMember {
-    id: string; // HouseholdUser ID
+    id: string; // household_members ID
     userId: string;
     role: string;
-    joinedAt: string;
+    joined_at: string;
     name: string;
     email: string;
     avatar: string | null;
-    createdAt: string; // User's creation date
+    created_at: string; // User's creation date
 }
 
 // --- Route Handlers ---
@@ -87,10 +87,10 @@ interface FormattedMember {
 // GET /api/households/[id]/members - Get all members of a household
 export async function GET(
     request: NextRequest,
-    { params }: { params: { id: string } }
+    { params }: { params: Promise<{ id: string }> }
 ) {
     // Change this line to fix the warning
-    const householdId = params.id; // Instead of const { id: householdId } = params;
+    const { id: householdId } = await params; // Instead of const { id: householdId } = params;
 
     console.log(`API: Fetching members for household ID: ${householdId}`);
 
@@ -151,43 +151,62 @@ export async function GET(
                 }
             );
 
-            // Fetch members directly with admin privileges
-            const { data, error: adminError } = await supabaseAdmin
-                .from('HouseholdUser')
-                .select(`
-                    id, userId, role, joinedAt,
-                    user:User!userId( id, name, email, avatar, createdAt )
-                `)
-                .eq('householdId', householdId)
-                .order('joinedAt', { ascending: false });
+            // Fetch members directly with admin privileges (simplified query)
+            const { data: members, error: adminError } = await supabaseAdmin
+                .from('household_members')
+                .select('id, user_id, role, joined_at')
+                .eq('household_id', householdId)
+                .order('joined_at', { ascending: false });
 
-                if (adminError) {
-                console.error("Error fetching with admin:", adminError);
+            if (adminError) {
+                console.error("Error fetching members with admin:", adminError);
                 return NextResponse.json({ error: 'Failed to fetch data (admin bypass)' }, { status: 500 });
             }
 
-            // Format the data as before
-             const formattedMembers: FormattedMember[] = [];
-             if (data && Array.isArray(data)) {
-                 const queryResults = data as unknown as HouseholdMemberQueryResult[];
-                 for (const member of queryResults) {
-                     if (member && member.user && member.user.id && member.user.name && member.user.email) {
-                         const userData = member.user;
-                         formattedMembers.push({
-                             id: member.id,
-                             userId: member.userId,
-                             role: member.role,
-                             joinedAt: member.joinedAt,
-                             name: userData.name,
-                             email: userData.email,
-                             avatar: userData.avatar,
-                             createdAt: userData.createdAt
-                         });
-                     } else {
-                          console.warn(`(Admin Bypass) Skipping member formatting due to missing data for HouseholdUser ID: ${member?.id}, User ID: ${member?.userId}`);
-                     }
-                 }
-             }
+            // Fetch profiles separately for all member user_ids
+            const userIds = members?.map(m => m.user_id).filter(Boolean) || [];
+            const { data: profiles } = userIds.length > 0
+                ? await supabaseAdmin
+                    .from('profiles')
+                    .select('id, name, email, avatar_url, created_at')
+                    .in('id', userIds)
+                : { data: [] };
+
+            // Create a map of profiles by id for quick lookup
+            const profileMap = new Map((profiles || []).map(p => [p.id, p]));
+
+            // Format the data
+            const formattedMembers: FormattedMember[] = [];
+            if (members && Array.isArray(members)) {
+                for (const member of members) {
+                    const profile = profileMap.get(member.user_id);
+                    if (profile) {
+                        formattedMembers.push({
+                            id: member.id,
+                            userId: member.user_id,
+                            role: member.role,
+                            joined_at: member.joined_at,
+                            name: profile.name || 'Unknown',
+                            email: profile.email || '',
+                            avatar: profile.avatar_url,
+                            created_at: profile.created_at
+                        });
+                    } else {
+                        // Still include member even if profile is missing
+                        formattedMembers.push({
+                            id: member.id,
+                            userId: member.user_id,
+                            role: member.role,
+                            joined_at: member.joined_at,
+                            name: 'Unknown User',
+                            email: '',
+                            avatar: null,
+                            created_at: member.joined_at
+                        });
+                        console.warn(`(Admin Bypass) Profile not found for user_id: ${member.user_id}`);
+                    }
+                }
+            }
 
             console.log(`Admin bypass: Found ${formattedMembers.length} members`);
             return NextResponse.json(formattedMembers);
@@ -199,10 +218,10 @@ export async function GET(
 
         // Check membership using the SAME client instance
         const { data: membership, error: membershipError } = await supabase
-            .from('HouseholdUser')
-            .select('userId, role')
-            .eq('userId', session.user.id)
-            .eq('householdId', householdId)
+            .from('household_members')
+            .select('user_id, role')
+            .eq('user_id', session.user.id)
+            .eq('household_id', householdId)
             .maybeSingle();
 
         if (membershipError) {
@@ -217,43 +236,60 @@ export async function GET(
 
         console.log(`User role in household: ${membership.role}`);
 
-        // Get members using the SAME client instance
-        const { data, error: membersError } = await supabase
-            .from('HouseholdUser')
-            .select(`
-                id, userId, role, joinedAt,
-                user:User!userId( id, name, email, avatar, createdAt )
-            `)
-            .eq('householdId', householdId)
-            .order('joinedAt', { ascending: false });
+        // Get members using the SAME client instance (simplified query)
+        const { data: members, error: membersError } = await supabase
+            .from('household_members')
+            .select('id, user_id, role, joined_at')
+            .eq('household_id', householdId)
+            .order('joined_at', { ascending: false });
 
         if (membersError) {
             console.error('Error fetching household members:', membersError);
             return NextResponse.json({ error: 'Failed to fetch household members' }, { status: 500 });
         }
 
-        console.log(`Found ${data?.length || 0} members for household ${householdId}`);
+        console.log(`Found ${members?.length || 0} members for household ${householdId}`);
+
+        // Fetch profiles separately for all member user_ids
+        const userIds = members?.map(m => m.user_id).filter(Boolean) || [];
+        const { data: profiles } = userIds.length > 0
+            ? await supabase
+                .from('profiles')
+                .select('id, name, email, avatar_url, created_at')
+                .in('id', userIds)
+            : { data: [] };
+
+        // Create a map of profiles by id for quick lookup
+        const profileMap = new Map((profiles || []).map(p => [p.id, p]));
 
         // Format the member data for response
         const formattedMembers: FormattedMember[] = [];
-        if (data && Array.isArray(data)) {
-            const queryResults = data as unknown as HouseholdMemberQueryResult[];
-            for (const member of queryResults) {
-                // Ensure user data is present before formatting
-                if (member && member.user && member.user.id && member.user.name && member.user.email) {
-                    const userData = member.user;
+        if (members && Array.isArray(members)) {
+            for (const member of members) {
+                const profile = profileMap.get(member.user_id);
+                if (profile) {
                     formattedMembers.push({
                         id: member.id,
-                        userId: member.userId,
+                        userId: member.user_id,
                         role: member.role,
-                        joinedAt: member.joinedAt,
-                        name: userData.name,
-                        email: userData.email,
-                        avatar: userData.avatar,
-                        createdAt: userData.createdAt
+                        joined_at: member.joined_at,
+                        name: profile.name || 'Unknown',
+                        email: profile.email || '',
+                        avatar: profile.avatar_url,
+                        created_at: profile.created_at
                     });
                 } else {
-                    console.warn(`Skipping member formatting due to missing data for HouseholdUser ID: ${member?.id}, User ID: ${member?.userId}`);
+                    formattedMembers.push({
+                        id: member.id,
+                        userId: member.user_id,
+                        role: member.role,
+                        joined_at: member.joined_at,
+                        name: 'Unknown User',
+                        email: '',
+                        avatar: null,
+                        created_at: member.joined_at
+                    });
+                    console.warn(`Profile not found for user_id: ${member.user_id}`);
                 }
             }
         }
@@ -272,10 +308,10 @@ export async function GET(
 // ... (POST handler remains unchanged) ...
 export async function POST(
     request: NextRequest,
-    { params }: { params: { id: string } }
+    { params }: { params: Promise<{ id: string }> }
 ) {
     // Properly destructure params
-    const householdId = params.id; // Apply fix here too for consistency
+    const { id: householdId } = await params; // Apply fix here too for consistency
 
     // Use the HELPER to create the SSR client
     let supabase;
@@ -317,23 +353,24 @@ export async function POST(
             return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
         }
 
-        const { email, role = 'MEMBER' } = payload;
+        const { email, role = 'member' } = payload;
 
         if (!email) {
             return NextResponse.json({ error: 'Email is required' }, { status: 400 });
         }
 
-        const validRoles = ['ADMIN', 'MEMBER', 'GUEST'];
-        if (!validRoles.includes(role)) {
+        const validRoles = ['admin', 'member'];
+        const normalizedRole = role?.toLowerCase();
+        if (!validRoles.includes(normalizedRole)) {
             return NextResponse.json({ error: 'Invalid role specified' }, { status: 400 });
         }
 
         // Check admin permission using the SAME client instance
         const { data: currentMembership, error: membershipError } = await supabase
-            .from('HouseholdUser')
-            .select('userId, role')
-            .eq('userId', session.user.id)
-            .eq('householdId', householdId)
+            .from('household_members')
+            .select('user_id, role')
+            .eq('user_id', session.user.id)
+            .eq('household_id', householdId)
             .maybeSingle();
 
         if (membershipError) {
@@ -342,18 +379,18 @@ export async function POST(
         }
 
         if (!currentMembership) {
-             console.error(`User ${session.user.id} is not a member of household ${householdId} (POST)`);
+            console.error(`User ${session.user.id} is not a member of household ${householdId} (POST)`);
             return NextResponse.json({ error: 'You are not a member of this household' }, { status: 403 });
         }
 
-        if (currentMembership.role !== 'ADMIN') {
-            console.warn(`User ${session.user.id} attempted POST without ADMIN role`);
+        if (currentMembership.role !== 'admin') {
+            console.warn(`User ${session.user.id} attempted POST without admin role`);
             return NextResponse.json({ error: 'Only household admins can add members directly' }, { status: 403 });
         }
 
         // Find target user using the SAME client instance
         const { data: targetUser, error: userError } = await supabase
-            .from('User') // Make sure your public user table is named 'User'
+            .from('profiles')
             .select('id, name, email')
             .eq('email', email)
             .maybeSingle();
@@ -369,10 +406,10 @@ export async function POST(
 
         // Check existing membership using the SAME client instance
         const { data: existingMember, error: existingError } = await supabase
-            .from('HouseholdUser')
+            .from('household_members')
             .select('id')
-            .eq('userId', targetUser.id)
-            .eq('householdId', householdId)
+            .eq('user_id', targetUser.id)
+            .eq('household_id', householdId)
             .limit(1)
             .maybeSingle();
 
@@ -386,20 +423,14 @@ export async function POST(
         }
 
         // Add member using the SAME client instance
-        // const newMembershipId = generateUUID(); // Use only if your table doesn't auto-generate UUIDs
         const { data: newMember, error: addError } = await supabase
-            .from('HouseholdUser')
+            .from('household_members')
             .insert({
-                // id: newMembershipId, // Only if needed and 'id' is the correct column name
-                userId: targetUser.id,
-                householdId: householdId,
-                role: role as 'ADMIN' | 'MEMBER' | 'GUEST', // Ensure role type matches DB enum/type if applicable
-                joinedAt: new Date().toISOString() // Make sure 'joinedAt' column expects timestamptz
+                user_id: targetUser.id,
+                household_id: householdId,
+                role: normalizedRole // DB uses lowercase: 'admin', 'member'
             })
-            .select(`
-                id, userId, householdId, role, joinedAt,
-                user:User!userId( id, name, email, avatar )
-            `) // Adjust join based on your actual table names and relationships
+            .select('id, user_id, household_id, role, joined_at')
             .single();
 
         if (addError) {
@@ -407,13 +438,21 @@ export async function POST(
             return NextResponse.json({ error: 'Failed to add member to household', details: addError.message }, { status: 500 });
         }
 
-        // This check might be redundant if .single() throws on no data, but good for safety
         if (!newMember) {
             console.error('Add member insert operation did not return data unexpectedly.');
             return NextResponse.json({ error: 'Failed to add member to household (no data returned)' }, { status: 500 });
         }
-        console.log(`Successfully added member ${targetUser.id} to household ${householdId}`)
-        return NextResponse.json(newMember, { status: 201 });
+
+        // Return formatted response with profile data we already have
+        console.log(`Successfully added member ${targetUser.id} to household ${householdId}`);
+        return NextResponse.json({
+            ...newMember,
+            userId: newMember.user_id,
+            joined_at: newMember.joined_at,
+            name: targetUser.name,
+            email: targetUser.email,
+            avatar: null
+        }, { status: 201 });
     } catch (error) {
         console.error('Error adding household member (outer catch):', error);
         const message = error instanceof Error ? error.message : 'Unknown server error';
@@ -426,10 +465,10 @@ export async function POST(
 // ... (PATCH handler remains unchanged) ...
 export async function PATCH(
     request: NextRequest,
-    { params }: { params: { id: string } }
+    { params }: { params: Promise<{ id: string }> }
 ) {
     // Properly destructure params
-     const householdId = params.id; // Apply fix here too for consistency
+     const { id: householdId } = await params; // Apply fix here too for consistency
 
     // Use the HELPER to create the SSR client
     let supabase;
@@ -481,17 +520,18 @@ export async function PATCH(
 
         const { role } = payload;
 
-        const validRoles = ['ADMIN', 'MEMBER', 'GUEST'];
-        if (!role || !validRoles.includes(role)) {
+        const validRoles = ['admin', 'member'];
+        const normalizedRole = role?.toLowerCase();
+        if (!normalizedRole || !validRoles.includes(normalizedRole)) {
             return NextResponse.json({ error: 'Invalid role specified in body' }, { status: 400 });
         }
 
         // Check admin permission using the SAME client instance
         const { data: currentMembership, error: adminCheckError } = await supabase
-            .from('HouseholdUser')
-            .select('userId, role')
-            .eq('userId', session.user.id)
-            .eq('householdId', householdId)
+            .from('household_members')
+            .select('user_id, role')
+            .eq('user_id', session.user.id)
+            .eq('household_id', householdId)
             .maybeSingle();
 
         if (adminCheckError) {
@@ -504,47 +544,44 @@ export async function PATCH(
             return NextResponse.json({ error: 'You are not a member of this household' }, { status: 403 });
         }
 
-        if (currentMembership.role !== 'ADMIN') {
-            console.warn(`User ${session.user.id} attempted PATCH without ADMIN role`);
+        if (currentMembership.role !== 'admin') {
+            console.warn(`User ${session.user.id} attempted PATCH without admin role`);
             return NextResponse.json({ error: 'Only household admins can update member roles' }, { status: 403 });
         }
 
         if (targetUserId === session.user.id) {
-             console.warn(`Admin ${session.user.id} attempted to change their own role via PATCH`);
-            // Consider allowing self-demotion, but preventing promotion might be safer
-            // Or require a different mechanism for role changes impacting self.
+            console.warn(`Admin ${session.user.id} attempted to change their own role via PATCH`);
             return NextResponse.json({ error: 'Admins cannot change their own role via this endpoint' }, { status: 400 });
         }
 
         // Update role using the SAME client instance
         const { data: updatedMember, error: updateError } = await supabase
-            .from('HouseholdUser')
-            .update({ role: role as 'ADMIN' | 'MEMBER' | 'GUEST' })
-            .eq('userId', targetUserId)
-            .eq('householdId', householdId)
-            .select(`
-                id, userId, householdId, role, joinedAt,
-                user:User!userId( id, name, email, avatar )
-            `) // Adjust join based on your actual table names and relationships
-            .single(); // Use single() to ensure exactly one row was updated and returned
+            .from('household_members')
+            .update({ role: normalizedRole })
+            .eq('user_id', targetUserId)
+            .eq('household_id', householdId)
+            .select('id, user_id, household_id, role, joined_at')
+            .single();
 
         if (updateError) {
             console.error('Error updating member role:', updateError);
-            // PGRST116 indicates that the WHERE clause didn't match any rows
             if (updateError.code === 'PGRST116') {
                 return NextResponse.json({ error: 'Target member not found in this household, or update failed' }, { status: 404 });
             }
             return NextResponse.json({ error: 'Failed to update member role', details: updateError.message }, { status: 500 });
         }
 
-        // This check might be redundant if .single() throws, but adds safety
         if (!updatedMember) {
             console.error('Update member role operation did not return data unexpectedly.');
             return NextResponse.json({ error: 'Failed to update member role (no data returned)' }, { status: 500 });
         }
 
-        console.log(`Successfully updated role for user ${targetUserId} in household ${householdId} to ${role}`);
-        return NextResponse.json(updatedMember);
+        console.log(`Successfully updated role for user ${targetUserId} in household ${householdId} to ${normalizedRole}`);
+        return NextResponse.json({
+            ...updatedMember,
+            userId: updatedMember.user_id,
+            joined_at: updatedMember.joined_at
+        });
     } catch (error) {
         console.error('Error updating member role (outer catch):', error);
         const message = error instanceof Error ? error.message : 'Unknown server error';
@@ -557,10 +594,10 @@ export async function PATCH(
 // ... (DELETE handler remains unchanged) ...
 export async function DELETE(
     request: NextRequest,
-    { params }: { params: { id: string } }
+    { params }: { params: Promise<{ id: string }> }
 ) {
     // Properly destructure params
-    const householdId = params.id; // Apply fix here too for consistency
+    const { id: householdId } = await params; // Apply fix here too for consistency
 
     // Use the HELPER to create the SSR client
     let supabase;
@@ -607,10 +644,10 @@ export async function DELETE(
 
         // Check current user's membership and role using the SAME client instance
         const { data: currentMembership, error: membershipError } = await supabase
-            .from('HouseholdUser')
-            .select('userId, role')
-            .eq('userId', session.user.id)
-            .eq('householdId', householdId)
+            .from('household_members')
+            .select('user_id, role')
+            .eq('user_id', session.user.id)
+            .eq('household_id', householdId)
             .maybeSingle();
 
         if (membershipError) {
@@ -623,21 +660,21 @@ export async function DELETE(
             return NextResponse.json({ error: 'You are not a member of this household' }, { status: 403 });
         }
 
-        isAdmin = currentMembership.role === 'ADMIN';
+        isAdmin = currentMembership.role === 'admin';
 
         // Authorization check: Must be removing self OR be an admin removing someone else
         if (!isRemovingSelf && !isAdmin) {
-            console.warn(`User ${session.user.id} (role ${currentMembership.role}) attempted to remove user ${targetUserId} without ADMIN role`);
+            console.warn(`User ${session.user.id} (role ${currentMembership.role}) attempted to remove user ${targetUserId} without admin role`);
             return NextResponse.json({ error: 'Only household admins can remove other members' }, { status: 403 });
         }
 
         // Get the member being removed to check their role (especially if they are an admin)
         // Use the SAME client instance
         const { data: memberToRemove, error: memberCheckError } = await supabase
-            .from('HouseholdUser')
-            .select('userId, role')
-            .eq('userId', targetUserId)
-            .eq('householdId', householdId)
+            .from('household_members')
+            .select('user_id, role')
+            .eq('user_id', targetUserId)
+            .eq('household_id', householdId)
             .maybeSingle();
 
         if (memberCheckError) {
@@ -652,30 +689,30 @@ export async function DELETE(
 
         // Prevent removing the last admin
         // Use the SAME client instance
-        if (memberToRemove.role === 'ADMIN') {
+        if (memberToRemove.role === 'admin') {
             const { count: adminCount, error: countError } = await supabase
-                .from('HouseholdUser')
-                .select('id', { count: 'exact', head: true }) // Efficiently count matching rows
-                .eq('householdId', householdId)
-                .eq('role', 'ADMIN');
+                .from('household_members')
+                .select('id', { count: 'exact', head: true })
+                .eq('household_id', householdId)
+                .eq('role', 'admin');
 
-            if (countError || adminCount === null) { // Handle potential count errors
+            if (countError || adminCount === null) {
                 console.error("Admin count error:", countError);
                 return NextResponse.json({ error: 'Failed to verify admin count' }, { status: 500 });
             }
 
             if (adminCount <= 1) {
-                 console.warn(`Attempt to remove the last admin (User ID: ${targetUserId}) from household ${householdId}`);
-                return NextResponse.json({ error: 'Cannot remove the last admin. Assign another admin first or delete the household.' }, { status: 400 }); // Use 400 Bad Request
+                console.warn(`Attempt to remove the last admin (User ID: ${targetUserId}) from household ${householdId}`);
+                return NextResponse.json({ error: 'Cannot remove the last admin. Assign another admin first or delete the household.' }, { status: 400 });
             }
         }
 
         // Proceed with removal using the SAME client instance
         const { error: deleteError } = await supabase
-            .from('HouseholdUser')
+            .from('household_members')
             .delete()
-            .eq('userId', targetUserId)
-            .eq('householdId', householdId);
+            .eq('user_id', targetUserId)
+            .eq('household_id', householdId);
 
         if (deleteError) {
             console.error('Error removing household member:', deleteError);

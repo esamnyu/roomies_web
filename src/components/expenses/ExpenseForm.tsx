@@ -2,8 +2,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-// Removed: import { supabaseClient } from '@/lib/supabase'; // No longer needed as submit logic is handled by parent
-import { useSession } from 'next-auth/react';
+import { supabaseClient } from '@/lib/supabase';
 
 // Aligned interface definitions with the page component
 interface Member {
@@ -59,8 +58,17 @@ export default function ExpenseForm({
   onSubmit,
   onCancel
 }: ExpenseFormProps) {
-  const { data: session } = useSession();
-  const currentUserId = session?.user?.id || ''; // Default value provided
+  const [currentUserId, setCurrentUserId] = useState<string>('');
+
+  // Get current user from Supabase auth
+  useEffect(() => {
+    const getUser = async () => {
+      const { data: { session } } = await supabaseClient.auth.getSession();
+      setCurrentUserId(session?.user?.id || '');
+    };
+    getUser();
+  }, []);
+
   const currentUser = members.find(m => m.id === currentUserId);
 
   const [isSubmitting, setIsSubmitting] = useState(false);

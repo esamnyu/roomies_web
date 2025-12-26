@@ -62,7 +62,7 @@ export async function POST(request: NextRequest) {
     
     // Let Supabase handle the timestamps by using its defaults
     const { data: newUser, error: insertError } = await supabase
-      .from('User')
+      .from('profiles')
       .insert([
         {
           id: userId,

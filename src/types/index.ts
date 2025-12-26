@@ -7,12 +7,12 @@ export interface Member {
   }
   
   export interface Payment {
-    id: string;
+    id?: string;
     userId: string;
     userName: string;
     amount: number;
     status: 'PENDING' | 'COMPLETED' | 'DECLINED';
-    expenseId: string;
+    expenseId?: string;
   }
   
   export interface Split {

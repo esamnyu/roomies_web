@@ -1,28 +1,29 @@
 // src/app/(auth)/login/page.tsx
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { supabaseClient } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
+import GoogleSignInButton from '@/components/auth/GoogleSignInButton';
 
-export default function LoginPage() {
+function LoginForm() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [authChecking, setAuthChecking] = useState(true);
-  
+
   const router = useRouter();
   const searchParams = useSearchParams();
   const callbackUrl = searchParams.get('callbackUrl') || '/dashboard';
-  
+
   // Check if user just registered
   const justRegistered = searchParams.get('registered') === 'true';
-  
+
   const { user, isLoading } = useAuth();
-  
+
   // Check authentication status on mount
   useEffect(() => {
     if (user && !isLoading) {
@@ -53,7 +54,7 @@ export default function LoginPage() {
 
       // Success, redirect to dashboard or callback URL
       router.push(callbackUrl);
-    } catch (err) {
+    } catch (_err) {
       setError('An unexpected error occurred');
       setLoading(false);
     }
@@ -85,7 +86,7 @@ export default function LoginPage() {
             </Link>
           </p>
         </div>
-        
+
         {justRegistered && (
           <div className="rounded-md bg-green-50 dark:bg-green-900 p-4">
             <div className="flex">
@@ -102,7 +103,7 @@ export default function LoginPage() {
             </div>
           </div>
         )}
-        
+
         {error && (
           <div className="rounded-md bg-red-50 dark:bg-red-900 p-4">
             <div className="flex">
@@ -119,7 +120,7 @@ export default function LoginPage() {
             </div>
           </div>
         )}
-        
+
         <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
           <div className="-space-y-px rounded-md shadow-sm">
             <div>
@@ -199,8 +200,39 @@ export default function LoginPage() {
               {loading ? 'Signing in...' : 'Sign in'}
             </button>
           </div>
+
+          {/* Divider */}
+          <div className="relative">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-gray-300 dark:border-gray-600" />
+            </div>
+            <div className="relative flex justify-center text-sm">
+              <span className="bg-gray-50 dark:bg-gray-900 px-2 text-gray-500 dark:text-gray-400">
+                Or continue with
+              </span>
+            </div>
+          </div>
+
+          {/* Google Sign In */}
+          <GoogleSignInButton redirectTo={callbackUrl} />
         </form>
       </div>
     </div>
+  );
+}
+
+function LoginLoading() {
+  return (
+    <div className="flex min-h-screen items-center justify-center">
+      <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-emerald-500"></div>
+    </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<LoginLoading />}>
+      <LoginForm />
+    </Suspense>
   );
 }

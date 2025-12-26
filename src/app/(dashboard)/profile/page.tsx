@@ -31,11 +31,12 @@ export default function ProfilePage() {
     if (user) {
       setFormData({
         ...formData,
-        name: user.name || '',
+        name: (user.user_metadata?.name as string) || '',
         email: user.email || '',
       });
-      setAvatar(user.avatar || null);
+      setAvatar((user.user_metadata?.avatar_url as string) || null);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
   
   // Handle input changes
@@ -99,11 +100,11 @@ export default function ProfilePage() {
       
       // Update the user record in the database
       const { error: dbError } = await supabaseClient
-        .from('User')
+        .from('profiles')
         .update({
           name: formData.name,
           avatar: avatar,
-          updatedAt: new Date().toISOString()
+          updated_at: new Date().toISOString()
         })
         .eq('id', user.id);
       
@@ -258,7 +259,7 @@ export default function ProfilePage() {
                 )}
               </div>
               
-              <h2 className="text-xl font-bold text-gray-900 dark:text-white">{user?.name}</h2>
+              <h2 className="text-xl font-bold text-gray-900 dark:text-white">{(user?.user_metadata?.name as string) || user?.email?.split('@')[0] || 'User'}</h2>
               <p className="text-gray-500 dark:text-gray-400">{user?.email}</p>
               
               <div className="mt-6 w-full">

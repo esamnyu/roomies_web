@@ -21,8 +21,8 @@ interface Invitation {
     email: string;
     avatar?: string;
   };
-  createdAt: string;
-  expiresAt: string;
+  created_at: string;
+  expires_at: string;
 }
 
 export default function UserInvitationsList() {
@@ -119,10 +119,10 @@ export default function UserInvitationsList() {
                 Role: {invitation.role.charAt(0) + invitation.role.slice(1).toLowerCase()}
               </p>
               <p className="text-sm text-gray-500 dark:text-gray-400">
-                Sent: {formatDate(invitation.createdAt)}
+                Sent: {formatDate(invitation.created_at)}
               </p>
               <p className="text-sm text-gray-500 dark:text-gray-400">
-                Expires: {formatDate(invitation.expiresAt)}
+                Expires: {formatDate(invitation.expires_at)}
               </p>
             </div>
             
