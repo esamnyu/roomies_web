@@ -1,4 +1,5 @@
 // src/lib/supabase.ts
+import { createBrowserClient } from '@supabase/ssr';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 // Environment variables
@@ -14,10 +15,10 @@ if (isBuildTime && typeof window === 'undefined') {
 }
 
 // Lazy client creation to avoid build-time errors
-let _supabaseClient: SupabaseClient | null = null;
+let _supabaseClient: ReturnType<typeof createBrowserClient> | null = null;
 let _supabaseAdmin: SupabaseClient | null = null;
 
-// Client for browser usage (with anonymous key)
+// Client for browser usage - uses cookies for SSR compatibility
 export const supabaseClient = (() => {
   if (isBuildTime) {
     // Return a placeholder during build that will throw if actually used
@@ -30,19 +31,14 @@ export const supabaseClient = (() => {
           autoRefreshToken: false,
         }
       }
-    );
+    ) as ReturnType<typeof createBrowserClient>;
   }
 
   if (!_supabaseClient) {
-    _supabaseClient = createClient(
+    // Use createBrowserClient from @supabase/ssr for cookie-based auth
+    _supabaseClient = createBrowserClient(
       supabaseUrl!,
-      supabaseAnonKey!,
-      {
-        auth: {
-          persistSession: true,
-          autoRefreshToken: true,
-        }
-      }
+      supabaseAnonKey!
     );
   }
   return _supabaseClient;
@@ -51,7 +47,7 @@ export const supabaseClient = (() => {
 // Admin client for server-side operations (with service role key)
 export const supabase = (() => {
   if (isBuildTime) {
-    return supabaseClient; // Use placeholder during build
+    return supabaseClient as unknown as SupabaseClient;
   }
 
   if (!_supabaseAdmin) {
@@ -66,7 +62,12 @@ export const supabase = (() => {
             }
           }
         )
-      : supabaseClient;
+      : createClient(supabaseUrl!, supabaseAnonKey!, {
+          auth: {
+            autoRefreshToken: false,
+            persistSession: false
+          }
+        });
   }
   return _supabaseAdmin;
 })();

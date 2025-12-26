@@ -1,12 +1,9 @@
 // src/app/api/households/[id]/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options'; // Ensure this path is correct
-import { createServerClient, type CookieOptions } from '@supabase/ssr';
+import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 
 // Helper function to create Supabase client in Route Handlers
-// Ensure you have a similar setup or import from a shared lib
 async function createSupabaseRouteHandlerClient() {
   const cookieStore = await cookies();
   return createServerClient(
@@ -14,23 +11,16 @@ async function createSupabaseRouteHandlerClient() {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
-        get(name: string) {
-          return cookieStore.get(name)?.value;
+        getAll() {
+          return cookieStore.getAll();
         },
-        set(name: string, value: string, options: CookieOptions) {
+        setAll(cookiesToSet) {
           try {
-            cookieStore.set({ name, value, ...options });
+            cookiesToSet.forEach(({ name, value, options }) => {
+              cookieStore.set(name, value, options);
+            });
           } catch (error) {
-            // Handle potential errors during cookie setting (e.g., read-only headers)
-            console.error("Error setting cookie:", name, error);
-          }
-        },
-        remove(name: string, options: CookieOptions) {
-          try {
-            cookieStore.set({ name, value: '', ...options });
-          } catch (error) {
-            // Handle potential errors during cookie removal
-            console.error("Error removing cookie:", name, error);
+            // Handle potential errors during cookie setting
           }
         },
       },
@@ -39,89 +29,86 @@ async function createSupabaseRouteHandlerClient() {
 }
 
 // Helper: Check household membership and optionally admin role
-// Returns { authorized: boolean, membership?: any, error?: string, status?: number }
-async function checkHouseholdAccess(supabase: any, householdId: string, userId: string, requireAdmin = false) {
-    const { data: membership, error } = await supabase
-      .from('household_members')
-      .select('userId, role') // Select role for admin check
-      .eq('user_id', userId)
-      .eq('household_id', householdId)
-      .single(); // Expecting one record or null/error
+async function checkHouseholdAccess(
+  supabase: any,
+  householdId: string,
+  userId: string,
+  requireAdmin = false
+) {
+  const { data: membership, error } = await supabase
+    .from('household_members')
+    .select('user_id, role')
+    .eq('user_id', userId)
+    .eq('household_id', householdId)
+    .maybeSingle();
 
-    if (error) {
-        console.error("Error checking household membership:", householdId, userId, error);
-        // Distinguish between "not found" (handled below) and other errors
-        if (error.code === 'PGRST116') { // code for "No rows returned"
-             return { authorized: false, error: 'You are not a member of this household.', status: 403 };
-        }
-        return { authorized: false, error: 'Failed to verify household membership.', status: 500 };
-    }
-    // PGRST116 should handle not found, but safety check
-    if (!membership) {
-        return { authorized: false, error: 'You are not a member of this household.', status: 403 };
-    }
-    if (requireAdmin && membership.role !== 'ADMIN') {
-        return { authorized: false, error: 'Only household admins can perform this action.', status: 403 };
-    }
-    // Return the membership object which contains the role
-    return { authorized: true, membership };
+  if (error) {
+    console.error('Error checking household membership:', householdId, userId, error);
+    return { authorized: false, error: 'Failed to verify household membership.', status: 500 };
+  }
+
+  if (!membership) {
+    return { authorized: false, error: 'You are not a member of this household.', status: 403 };
+  }
+
+  if (requireAdmin && membership.role !== 'admin') {
+    return { authorized: false, error: 'Only household admins can perform this action.', status: 403 };
+  }
+
+  return { authorized: true, membership };
 }
-
 
 // GET /api/households/[id] - Get a specific household's details
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const supabase = createSupabaseRouteHandlerClient();
+  const supabase = await createSupabaseRouteHandlerClient();
+
   try {
-    const { data: { session }, error: sessionError } = await (await supabase).auth.getSession();
-    if (sessionError) throw new Error(sessionError.message);
-    if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
 
-    const { id: householdId } = await params;
-    if (!householdId) return NextResponse.json({ error: 'Household ID is required' }, { status: 400 });
-
-    // 1. Check if user is a member of the household
-    const accessCheck = await checkHouseholdAccess(supabase, householdId, session.user.id);
-    if (!accessCheck.authorized) {
-        return NextResponse.json({ error: accessCheck.error }, { status: accessCheck.status });
+    if (userError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // 2. Get the household with related data (basic example)
-    // Fetching limited/filtered related data might require multiple queries or a DB function
-    const { data: household, error: fetchError } = await (await supabase)
+    const { id: householdId } = await params;
+    if (!householdId) {
+      return NextResponse.json({ error: 'Household ID is required' }, { status: 400 });
+    }
+
+    // Check if user is a member of the household
+    const accessCheck = await checkHouseholdAccess(supabase, householdId, user.id);
+    if (!accessCheck.authorized) {
+      return NextResponse.json({ error: accessCheck.error }, { status: accessCheck.status });
+    }
+
+    // Get the household with related data
+    const { data: household, error: fetchError } = await supabase
       .from('households')
       .select(`
         *,
-        members:HouseholdUser(
-            *,
-            user:User!userId(id, name, email, avatar)
+        members:household_members(
+          *,
+          user:profiles!user_id(id, name, email, avatar_url)
         ),
-        expenses:Expense( * ),
-        tasks:Task( * ),
-        messages:Message( * ),
-        rules:HouseRule( * )
+        expenses:expenses(*),
+        chores:household_chores(*)
       `)
       .eq('id', householdId)
-      .single(); // Expect one household
+      .single();
 
     if (fetchError) {
-        console.error('Error fetching household details:', fetchError);
-        // Check if it's a "not found" error
-        if (fetchError.code === 'PGRST116') {
-             return NextResponse.json({ error: 'Household not found.' }, { status: 404 });
-        }
-        return NextResponse.json({ error: 'Failed to fetch household details.' }, { status: 500 });
+      console.error('Error fetching household details:', fetchError);
+      if (fetchError.code === 'PGRST116') {
+        return NextResponse.json({ error: 'Household not found.' }, { status: 404 });
+      }
+      return NextResponse.json({ error: 'Failed to fetch household details.' }, { status: 500 });
     }
-     if (!household) { // Should be caught by PGRST116, but safety check
+
+    if (!household) {
       return NextResponse.json({ error: 'Household not found.' }, { status: 404 });
     }
-
-     // You might want to manually limit related data here if needed, e.g.:
-     // household.expenses = household.expenses?.slice(0, 5);
-     // household.tasks = household.tasks?.filter(t => t.status !== 'COMPLETED').slice(0, 5);
-
 
     return NextResponse.json(household);
   } catch (error) {
@@ -136,69 +123,70 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const supabase = createSupabaseRouteHandlerClient();
+  const supabase = await createSupabaseRouteHandlerClient();
+
   try {
-    const { data: { session }, error: sessionError } = await (await supabase).auth.getSession();
-    if (sessionError) throw new Error(sessionError.message);
-    if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
 
-    const { id: householdId } = await params;
-    if (!householdId) return NextResponse.json({ error: 'Household ID is required' }, { status: 400 });
-
-    // 1. Check if user is an ADMIN of the household
-    const accessCheck = await checkHouseholdAccess(supabase, householdId, session.user.id, true); // requireAdmin = true
-    if (!accessCheck.authorized) {
-        return NextResponse.json({ error: accessCheck.error }, { status: accessCheck.status });
+    if (userError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // 2. Get update data from request body
+    const { id: householdId } = await params;
+    if (!householdId) {
+      return NextResponse.json({ error: 'Household ID is required' }, { status: 400 });
+    }
+
+    // Check if user is an ADMIN of the household
+    const accessCheck = await checkHouseholdAccess(supabase, householdId, user.id, true);
+    if (!accessCheck.authorized) {
+      return NextResponse.json({ error: accessCheck.error }, { status: accessCheck.status });
+    }
+
+    // Get update data from request body
     const body = await request.json();
     const { name, address } = body;
 
-    // Prepare update data, only include fields that are provided
-    const updateData: { name?: string, address?: string | null, updated_at: string } = {
-        updated_at: new Date().toISOString() // Always update updatedAt timestamp
+    // Prepare update data
+    const updateData: { name?: string; address?: string | null; updated_at: string } = {
+      updated_at: new Date().toISOString()
     };
+
     if (name !== undefined) {
-        if (typeof name !== 'string' || name.trim() === '') {
-            return NextResponse.json({ error: 'Household name cannot be empty' }, { status: 400 });
-        }
-        updateData.name = name.trim();
+      if (typeof name !== 'string' || name.trim() === '') {
+        return NextResponse.json({ error: 'Household name cannot be empty' }, { status: 400 });
+      }
+      updateData.name = name.trim();
     }
+
     if (address !== undefined) {
-        // Allow setting address to null or a non-empty string
-        updateData.address = (typeof address === 'string' && address.trim() !== '') ? address.trim() : null;
+      updateData.address = (typeof address === 'string' && address.trim() !== '') ? address.trim() : null;
     }
 
-     // Check if there's anything to update besides the timestamp
-     if (Object.keys(updateData).length <= 1) {
-        // If only updatedAt is present, maybe return current data or 304 Not Modified?
-        // Or return an error indicating nothing was changed.
-        return NextResponse.json({ error: 'No valid fields provided for update' }, { status: 400 });
-     }
+    // Check if there's anything to update besides the timestamp
+    if (Object.keys(updateData).length <= 1) {
+      return NextResponse.json({ error: 'No valid fields provided for update' }, { status: 400 });
+    }
 
-
-    // 3. Update the household
-    const { data: updatedHousehold, error: updateError } = await (await supabase)
+    // Update the household
+    const { data: updatedHousehold, error: updateError } = await supabase
       .from('households')
       .update(updateData)
       .eq('id', householdId)
-      .select() // Select the updated household data
+      .select()
       .single();
 
-     if (updateError) {
-        console.error('Error updating household:', updateError);
-        // Check for specific errors like not found if needed
-        if (updateError.code === 'PGRST116') {
-            return NextResponse.json({ error: 'Household not found.' }, { status: 404 });
-        }
-        return NextResponse.json({ error: 'Failed to update household.' }, { status: 500 });
-     }
-      if (!updatedHousehold) {
-        // Should not happen if update was successful and no error, but check anyway
-         return NextResponse.json({ error: 'Household not found after update attempt.' }, { status: 404 });
+    if (updateError) {
+      console.error('Error updating household:', updateError);
+      if (updateError.code === 'PGRST116') {
+        return NextResponse.json({ error: 'Household not found.' }, { status: 404 });
       }
+      return NextResponse.json({ error: 'Failed to update household.' }, { status: 500 });
+    }
 
+    if (!updatedHousehold) {
+      return NextResponse.json({ error: 'Household not found after update attempt.' }, { status: 404 });
+    }
 
     return NextResponse.json(updatedHousehold);
   } catch (error) {
@@ -213,132 +201,123 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-    const supabase = createSupabaseRouteHandlerClient();
-    try {
-      const { data: { session }, error: sessionError } = await (await supabase).auth.getSession();
-      if (sessionError) throw new Error(sessionError.message);
-      if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const supabase = await createSupabaseRouteHandlerClient();
 
-      const { id: householdId } = await params;
-      if (!householdId) return NextResponse.json({ error: 'Household ID is required' }, { status: 400 });
+  try {
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
 
-      // 1. Check if user is an ADMIN of the household
-      const accessCheck = await checkHouseholdAccess(supabase, householdId, session.user.id, true); // requireAdmin = true
-      if (!accessCheck.authorized) {
-          return NextResponse.json({ error: accessCheck.error }, { status: accessCheck.status });
-      }
-
-      // 2. Count members - prevent deletion if other members exist (safer default)
-      const { count: membersCount, error: countError } = await (await supabase)
-        .from('household_members')
-        .select('*', { count: 'exact', head: true })
-        .eq('household_id', householdId);
-
-      if (countError) {
-           console.error('Error counting household members:', countError);
-           return NextResponse.json({ error: 'Failed to verify member count before deletion.' }, { status: 500 });
-      }
-
-      // Check if the count is null (shouldn't happen but safety check) or greater than 1
-      if (membersCount === null || membersCount > 1) {
-        return NextResponse.json({
-          error: `Cannot delete household with ${membersCount ?? '?'} members. Remove other members first.`
-        }, { status: 400 });
-      }
-       // If count is 1, it must be the current admin user
-
-
-      // --- Transaction Start (Conceptual - Use Supabase Function for real transaction) ---
-      console.warn(`Executing household ${householdId} deletion WITHOUT a database transaction. Use a DB function for production.`);
-
-      // 3. Delete related records (order might matter based on constraints)
-      // IMPORTANT: Add deletion for ALL related tables (Tasks, Messages, Rules, Expenses, Payments, Splits, Invitations etc.)
-
-      // Fetch Expense IDs first
-      const { data: expensesToDelete, error: expenseIdsError } = await (await supabase)
-        .from('Expense')
-        .select('id')
-        .eq('household_id', householdId);
-
-      if (expenseIdsError) {
-        console.error("Error fetching expense IDs for deletion:", expenseIdsError);
-        return NextResponse.json({ error: 'Failed to get related expense IDs.' }, { status: 500 });
-      }
-
-      // Check if there are any expenses before attempting to delete related items
-      if (expensesToDelete && expensesToDelete.length > 0) {
-        const expenseIds = expensesToDelete.map(e => e.id); // Extract IDs into an array
-
-        // Now use the array of IDs in the .in() filter
-        const { error: deleteSplitsError } = await (await supabase).from('ExpenseSplit').delete().in('expenseId', expenseIds);
-        if (deleteSplitsError) console.error("Error deleting ExpenseSplits:", deleteSplitsError); // Log error, continue cleanup
-
-        const { error: deletePaymentsError } = await (await supabase).from('Payment').delete().in('expenseId', expenseIds);
-         if (deletePaymentsError) console.error("Error deleting Payments:", deletePaymentsError); // Log error, continue cleanup
-
-        // Delete the Expenses themselves after related items
-        const { error: deleteExpensesError } = await (await supabase).from('Expense').delete().in('id', expenseIds);
-         if (deleteExpensesError) console.error("Error deleting Expenses:", deleteExpensesError); // Log error, continue cleanup
-      } else {
-        console.log(`No expenses found for household ${householdId} to delete related data for.`);
-      }
-
-      // ... add deletes for Task, Message, HouseRule, Invitation, etc. ...
-      // Example:
-      const { error: deleteTasksError } = await (await supabase).from('Task').delete().eq('household_id', householdId);
-      if (deleteTasksError) console.error("Error deleting Tasks:", deleteTasksError);
-
-      const { error: deleteMessagesError } = await (await supabase).from('messages').delete().eq('household_id', householdId);
-       if (deleteMessagesError) console.error("Error deleting Messages:", deleteMessagesError);
-
-       const { error: deleteRulesError } = await (await supabase).from('HouseRule').delete().eq('household_id', householdId);
-       if (deleteRulesError) console.error("Error deleting HouseRules:", deleteRulesError);
-
-       const { error: deleteInvitesError } = await (await supabase).from('invitations').delete().eq('household_id', householdId);
-       if (deleteInvitesError) console.error("Error deleting Invitations:", deleteInvitesError);
-
-
-      // Finally, delete HouseholdUser entries (should only be the admin left)
-      const { error: deleteMembersError } = await (await supabase).from('household_members').delete().eq('household_id', householdId);
-       if (deleteMembersError) {
-            console.error("Error deleting HouseholdUsers:", deleteMembersError);
-            // This is critical, if this fails, the household delete might fail too.
-            return NextResponse.json({ error: 'Failed to delete household membership record.' }, { status: 500 });
-       }
-
-
-      // 4. Delete the household itself
-      const { data: deletedHousehold, error: deleteHouseholdError } = await (await supabase)
-        .from('households')
-        .delete()
-        .eq('id', householdId)
-        .select() // Optionally select the deleted row (or just check error)
-        .maybeSingle(); // Use maybeSingle in case it was already deleted
-
-      if (deleteHouseholdError) {
-        console.error('Error deleting household:', deleteHouseholdError);
-         // If the household delete failed, related data might be partially deleted (BAD)
-        return NextResponse.json({ error: 'Failed to delete household record. Related data might be inconsistent.' }, { status: 500 });
-      }
-      if (!deletedHousehold && !deleteHouseholdError){
-        // This case means the household didn't exist when delete was attempted.
-        // Could be considered success or a 404 depending on desired behavior.
-        console.log(`Household ${householdId} not found during delete, potentially already deleted.`);
-         // Returning success as the end state (household gone) is achieved.
-      }
-      // --- Transaction End (Conceptual) ---
-
-
-      return NextResponse.json({ message: 'Household deleted successfully' });
-
-    } catch (error) {
-      console.error('Error in DELETE /api/households/[id]:', error);
-      const message = error instanceof Error ? error.message : 'Failed to delete household';
-      return NextResponse.json({ error: message }, { status: 500 });
+    if (userError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-}
 
-// NOTE: Member management endpoints (POST add, PATCH role, DELETE member)
-// were in the original Prisma file but should ideally be in separate routes
-// like /api/households/[id]/members and /api/households/[id]/members/[userId]
-// They would need similar refactoring using Supabase.
+    const { id: householdId } = await params;
+    if (!householdId) {
+      return NextResponse.json({ error: 'Household ID is required' }, { status: 400 });
+    }
+
+    // Check if user is an ADMIN of the household
+    const accessCheck = await checkHouseholdAccess(supabase, householdId, user.id, true);
+    if (!accessCheck.authorized) {
+      return NextResponse.json({ error: accessCheck.error }, { status: accessCheck.status });
+    }
+
+    // Count members - prevent deletion if other members exist
+    const { count: membersCount, error: countError } = await supabase
+      .from('household_members')
+      .select('*', { count: 'exact', head: true })
+      .eq('household_id', householdId);
+
+    if (countError) {
+      console.error('Error counting household members:', countError);
+      return NextResponse.json({ error: 'Failed to verify member count before deletion.' }, { status: 500 });
+    }
+
+    if (membersCount === null || membersCount > 1) {
+      return NextResponse.json({
+        error: `Cannot delete household with ${membersCount ?? '?'} members. Remove other members first.`
+      }, { status: 400 });
+    }
+
+    console.warn(`Executing household ${householdId} deletion.`);
+
+    // Delete related records
+
+    // Get expense IDs first
+    const { data: expensesToDelete, error: expenseIdsError } = await supabase
+      .from('expenses')
+      .select('id')
+      .eq('household_id', householdId);
+
+    if (expenseIdsError) {
+      console.error('Error fetching expense IDs for deletion:', expenseIdsError);
+      return NextResponse.json({ error: 'Failed to get related expense IDs.' }, { status: 500 });
+    }
+
+    // Delete expense-related data
+    if (expensesToDelete && expensesToDelete.length > 0) {
+      const expenseIds = expensesToDelete.map(e => e.id);
+
+      const { error: deleteSplitsError } = await supabase
+        .from('expense_splits')
+        .delete()
+        .in('expense_id', expenseIds);
+      if (deleteSplitsError) console.error('Error deleting expense_splits:', deleteSplitsError);
+
+      // Delete the expenses themselves
+      const { error: deleteExpensesError } = await supabase
+        .from('expenses')
+        .delete()
+        .in('id', expenseIds);
+      if (deleteExpensesError) console.error('Error deleting expenses:', deleteExpensesError);
+    }
+
+    // Delete chores
+    const { error: deleteChoresError } = await supabase
+      .from('household_chores')
+      .delete()
+      .eq('household_id', householdId);
+    if (deleteChoresError) console.error('Error deleting household_chores:', deleteChoresError);
+
+    // Delete messages
+    const { error: deleteMessagesError } = await supabase
+      .from('messages')
+      .delete()
+      .eq('household_id', householdId);
+    if (deleteMessagesError) console.error('Error deleting messages:', deleteMessagesError);
+
+    // Delete invitations
+    const { error: deleteInvitesError } = await supabase
+      .from('invitations')
+      .delete()
+      .eq('household_id', householdId);
+    if (deleteInvitesError) console.error('Error deleting invitations:', deleteInvitesError);
+
+    // Delete household members
+    const { error: deleteMembersError } = await supabase
+      .from('household_members')
+      .delete()
+      .eq('household_id', householdId);
+
+    if (deleteMembersError) {
+      console.error('Error deleting household_members:', deleteMembersError);
+      return NextResponse.json({ error: 'Failed to delete household membership record.' }, { status: 500 });
+    }
+
+    // Finally, delete the household itself
+    const { error: deleteHouseholdError } = await supabase
+      .from('households')
+      .delete()
+      .eq('id', householdId);
+
+    if (deleteHouseholdError) {
+      console.error('Error deleting household:', deleteHouseholdError);
+      return NextResponse.json({ error: 'Failed to delete household record.' }, { status: 500 });
+    }
+
+    return NextResponse.json({ message: 'Household deleted successfully' });
+  } catch (error) {
+    console.error('Error in DELETE /api/households/[id]:', error);
+    const message = error instanceof Error ? error.message : 'Failed to delete household';
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}

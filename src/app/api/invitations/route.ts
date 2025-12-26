@@ -1,6 +1,6 @@
 // src/app/api/invitations/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerClient, type CookieOptions } from '@supabase/ssr';
+import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import {
   getInvitationByToken,
@@ -20,9 +20,18 @@ async function createSupabaseRouteHandlerClient() {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
-        get(name: string) { return cookieStore.get(name)?.value; },
-        set(name: string, value: string, options: CookieOptions) { try { cookieStore.set({ name, value, ...options }); } catch (error) { console.error("Error setting cookie:", name, error); } },
-        remove(name: string, options: CookieOptions) { try { cookieStore.set({ name, value: '', ...options }); } catch (error) { console.error("Error removing cookie:", name, error); } },
+        getAll() {
+          return cookieStore.getAll();
+        },
+        setAll(cookiesToSet) {
+          try {
+            cookiesToSet.forEach(({ name, value, options }) => {
+              cookieStore.set(name, value, options);
+            });
+          } catch (error) {
+            // Handle potential errors during cookie setting
+          }
+        },
       },
     }
   );
@@ -32,15 +41,15 @@ async function createSupabaseRouteHandlerClient() {
 export async function GET(request: NextRequest) {
   try {
     const supabase = await createSupabaseRouteHandlerClient();
-    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
 
-    if (sessionError || !session) {
+    if (userError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     const { searchParams } = new URL(request.url);
     const householdId = searchParams.get('household_id');
-    const status = searchParams.get('status') || 'PENDING';
+    const status = searchParams.get('status') || 'pending';
     const tokenParam = searchParams.get('token');
 
     // Token-based lookup
@@ -52,12 +61,12 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({
           id: invitation.id,
           email: invitation.email,
-          householdId: invitation.householdId,
+          household_id: invitation.household_id,
           role: invitation.role,
           status: invitation.status,
-          expires_at: invitation.expiresAt,
+          expires_at: invitation.expires_at,
           message: invitation.message,
-          created_at: invitation.createdAt,
+          created_at: invitation.created_at,
           household: invitation.household,
           inviter: invitation.inviter
         });
@@ -72,8 +81,8 @@ export async function GET(request: NextRequest) {
       .from('invitations')
       .select(`
         *,
-        household:householdId(*),
-        inviter:inviterId(id, name, email, avatar)
+        household:households!household_id(id, name, address),
+        inviter:profiles!invited_by(id, name, email, avatar_url)
       `);
 
     if (householdId) {
@@ -81,11 +90,11 @@ export async function GET(request: NextRequest) {
       const { data: householdRole, error: roleError } = await supabase
         .from('household_members')
         .select('role')
-        .eq('user_id', session.user.id)
+        .eq('user_id', user.id)
         .eq('household_id', householdId)
         .single();
 
-      if (roleError || (householdRole?.role !== 'ADMIN')) {
+      if (roleError || (householdRole?.role !== 'admin')) {
         return NextResponse.json({
           error: 'You must be a household admin to view these invitations'
         }, { status: 403 });
@@ -97,13 +106,14 @@ export async function GET(request: NextRequest) {
     } else {
       // Get invitations for the current user
       query = query
-        .eq('email', session.user.email || '')
+        .eq('email', user.email || '')
         .eq('status', status);
     }
 
     const { data, error } = await query;
 
     if (error) {
+      console.error('Error fetching invitations:', error);
       return NextResponse.json({ error: 'Failed to fetch invitations' }, { status: 500 });
     }
 
@@ -118,9 +128,9 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createSupabaseRouteHandlerClient();
-    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
 
-    if (sessionError || !session) {
+    if (userError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -129,30 +139,30 @@ export async function POST(request: NextRequest) {
     // Validate the data
     validateInvitationData(invitationData);
 
-    // Get user profile from User table
-    const { data: userData, error: userError } = await supabase
+    // Get user profile from profiles table
+    const { data: userData, error: profileError } = await supabase
       .from('profiles')
       .select('id, name, email')
-      .eq('id', session.user.id)
+      .eq('id', user.id)
       .single();
 
-    if (userError || !userData) {
+    if (profileError || !userData) {
       return NextResponse.json({ error: 'User profile not found' }, { status: 404 });
     }
 
     // Check if the user is a member and admin of the household
     const { data: currentMembership, error: membershipError } = await supabase
       .from('household_members')
-      .select('userId, role')
+      .select('user_id, role')
       .eq('user_id', userData.id)
-      .eq('household_id', invitationData.householdId)
+      .eq('household_id', invitationData.householdId || invitationData.household_id)
       .single();
 
     if (membershipError || !currentMembership) {
       return NextResponse.json({ error: 'You are not a member of this household' }, { status: 403 });
     }
 
-    if (currentMembership.role !== 'ADMIN') {
+    if (currentMembership.role !== 'admin') {
       return NextResponse.json({ error: 'Only household admins can invite members' }, { status: 403 });
     }
 
@@ -161,7 +171,7 @@ export async function POST(request: NextRequest) {
       supabase,
       invitationData,
       userData.id,
-      userData.name || session.user.email || 'User',
+      userData.name || user.email || 'User',
       request
     );
 
@@ -177,9 +187,9 @@ export async function POST(request: NextRequest) {
 export async function PATCH(request: NextRequest) {
   try {
     const supabase = await createSupabaseRouteHandlerClient();
-    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
 
-    if (sessionError || !session) {
+    if (userError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -195,38 +205,40 @@ export async function PATCH(request: NextRequest) {
     const requestData = await request.json();
     const { status } = requestData;
 
-    if (!status || !['ACCEPTED', 'DECLINED'].includes(status)) {
+    if (!status || !['accepted', 'declined'].includes(status.toLowerCase())) {
       return NextResponse.json({
-        error: 'Invalid status value. Must be ACCEPTED or DECLINED'
+        error: 'Invalid status value. Must be accepted or declined'
       }, { status: 400 });
     }
+
+    const normalizedStatus = status.toLowerCase() as 'accepted' | 'declined';
 
     // Update the invitation
     const updatedInvitation = await updateInvitationStatus(
       supabase,
       invitationId,
-      status as 'ACCEPTED' | 'DECLINED',
-      session.user.email || ''
+      normalizedStatus,
+      user.email || ''
     );
 
     // If accepted, add the user to the household
-    if (status === 'ACCEPTED') {
+    if (normalizedStatus === 'accepted') {
       await addUserToHousehold(
         supabase,
-        session.user.id,
-        updatedInvitation.householdId,
-        updatedInvitation.role
+        user.id,
+        updatedInvitation.household_id,
+        updatedInvitation.role || 'member'
       );
 
       return NextResponse.json({
         message: 'Invitation accepted successfully',
         invitation: updatedInvitation,
-        redirectTo: `/dashboard/${updatedInvitation.householdId}`
+        redirectTo: `/dashboard/${updatedInvitation.household_id}`
       });
     }
 
     return NextResponse.json({
-      message: `Invitation ${status.toLowerCase()} successfully`,
+      message: `Invitation ${normalizedStatus} successfully`,
       invitation: updatedInvitation
     });
   } catch (error) {
@@ -240,9 +252,9 @@ export async function PATCH(request: NextRequest) {
 export async function PUT(request: NextRequest) {
   try {
     const supabase = await createSupabaseRouteHandlerClient();
-    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
 
-    if (sessionError || !session) {
+    if (userError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -266,7 +278,7 @@ export async function PUT(request: NextRequest) {
     const result = await acceptInvitationByToken(
       supabase,
       tokenParam,
-      session.user,
+      user,
       claimWithCurrentEmail
     );
 

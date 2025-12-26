@@ -213,21 +213,21 @@ export async function getUnreadMessagesCount(householdId: string, userId: string
     }
     
     // Get read receipts for these messages
-    const messageIds = messages.map(msg => msg.id);
+    const messageIds = messages.map((msg: { id: string }) => msg.id);
     const { data: receipts, error: receiptsError } = await supabaseClient
       .from('MessageReadReceipt')
       .select('messageId')
       .eq('user_id', userId)
       .in('messageId', messageIds);
-    
+
     if (receiptsError) {
       console.error('Error fetching read receipts:', receiptsError);
       return 0;
     }
-    
+
     // Count unread messages
-    const readMessageIds = receipts?.map(receipt => receipt.messageId) || [];
-    const unreadCount = messages.filter(msg => !readMessageIds.includes(msg.id)).length;
+    const readMessageIds = receipts?.map((receipt: { messageId: string }) => receipt.messageId) || [];
+    const unreadCount = messages.filter((msg: { id: string }) => !readMessageIds.includes(msg.id)).length;
     
     console.log(`User ${userId} has ${unreadCount} unread messages in household ${householdId}`);
     return unreadCount;
@@ -252,9 +252,11 @@ export function subscribeToMessages(householdId: string, callback: (message: Mes
             table: 'Message',
             filter: `householdId=eq.${householdId}`
           },
-          async (payload) => {
+          async (payload: { new: Record<string, unknown>; old: Record<string, unknown> }) => {
             console.log('Subscription received new message:', payload);
-            
+            const newRecord = payload.new;
+            if (!newRecord || !newRecord.id) return;
+
             // Fetch the complete message with sender information
             try {
               const { data, error } = await supabaseClient
@@ -263,9 +265,9 @@ export function subscribeToMessages(householdId: string, callback: (message: Mes
                   *,
                   sender:senderId(id, name, avatar)
                 `)
-                .eq('id', payload.new.id)
+                .eq('id', newRecord.id as string)
                 .single();
-                
+
               if (!error && data) {
                 console.log('Complete message data:', data);
                 callback(data as Message);
@@ -274,24 +276,24 @@ export function subscribeToMessages(householdId: string, callback: (message: Mes
                 console.error('Error fetching complete message:', error);
                 // Convert the payload to match the Message interface as closely as possible
                 const simpleMessage: Message = {
-                  id: payload.new.id,
-                  householdId: payload.new.householdId,
-                  senderId: payload.new.senderId,
-                  content: payload.new.content,
-                  contentType: payload.new.contentType || 'TEXT',
-                  created_at: payload.new.createdAt || new Date().toISOString(),
-                  updated_at: payload.new.updatedAt || new Date().toISOString()
+                  id: newRecord.id as string,
+                  householdId: newRecord.householdId as string,
+                  senderId: newRecord.senderId as string,
+                  content: newRecord.content as string,
+                  contentType: (newRecord.contentType as string) || 'TEXT',
+                  created_at: (newRecord.createdAt as string) || new Date().toISOString(),
+                  updated_at: (newRecord.updatedAt as string) || new Date().toISOString()
                 };
                 callback(simpleMessage);
               }
             } catch (err) {
               console.error('Error in subscription callback:', err);
               // Still try to use the payload even if the fetch fails
-              callback(payload.new as Message);
+              callback(newRecord as unknown as Message);
             }
           }
         )
-        .subscribe((status) => {
+        .subscribe((status: string) => {
           console.log(`Subscription status for household ${householdId}:`, status);
         });
     

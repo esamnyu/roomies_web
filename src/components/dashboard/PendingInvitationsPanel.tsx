@@ -83,7 +83,7 @@ export default function PendingInvitationsPanel() {
           setInvitations(allInvitations || []);
         } else {
           setInvitations(
-            allInvitations?.filter(inv => 
+            allInvitations?.filter((inv: Invitation) =>
               userEmail && inv.email.toLowerCase() === userEmail.toLowerCase()
             ) || []
           );
