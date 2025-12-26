@@ -1,6 +1,6 @@
 // src/app/api/expenses/[id]/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerClient, type CookieOptions } from '@supabase/ssr';
+import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 
 // Helper function to create Supabase client in Route Handlers
@@ -11,21 +11,16 @@ async function createSupabaseRouteHandlerClient() {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
-        get(name: string) {
-          return cookieStore.get(name)?.value;
+        getAll() {
+          return cookieStore.getAll();
         },
-        set(name: string, value: string, options: CookieOptions) {
+        setAll(cookiesToSet) {
           try {
-            cookieStore.set({ name, value, ...options });
+            cookiesToSet.forEach(({ name, value, options }) => {
+              cookieStore.set(name, value, options);
+            });
           } catch (error) {
-            console.error("Error setting cookie:", name, error);
-          }
-        },
-        remove(name: string, options: CookieOptions) {
-          try {
-            cookieStore.set({ name, value: '', ...options });
-          } catch (error) {
-            console.error("Error removing cookie:", name, error);
+            // Handle potential errors during cookie setting
           }
         },
       },
@@ -41,10 +36,9 @@ export async function GET(
   const supabase = await createSupabaseRouteHandlerClient();
 
   try {
-    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
 
-    if (sessionError) throw new Error(sessionError.message);
-    if (!session) {
+    if (userError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -75,7 +69,7 @@ export async function GET(
     const { data: householdUser, error: membershipError } = await supabase
       .from('household_members')
       .select('user_id, household_id, role')
-      .eq('user_id', session.user.id)
+      .eq('user_id', user.id)
       .eq('household_id', expense.household_id)
       .single();
 
@@ -98,10 +92,9 @@ export async function PATCH(
   const supabase = await createSupabaseRouteHandlerClient();
 
   try {
-    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
 
-    if (sessionError) throw new Error(sessionError.message);
-    if (!session) {
+    if (userError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -120,7 +113,7 @@ export async function PATCH(
     }
 
     // Only the creator can update the expense
-    if (currentExpense.created_by !== session.user.id && currentExpense.paid_by !== session.user.id) {
+    if (currentExpense.created_by !== user.id && currentExpense.paid_by !== user.id) {
       return NextResponse.json({ error: 'You are not authorized to update this expense' }, { status: 403 });
     }
 
@@ -128,7 +121,7 @@ export async function PATCH(
     const { data: householdUser, error: membershipError } = await supabase
       .from('household_members')
       .select('user_id, household_id, role')
-      .eq('user_id', session.user.id)
+      .eq('user_id', user.id)
       .eq('household_id', currentExpense.household_id)
       .single();
 
@@ -230,10 +223,9 @@ export async function DELETE(
   const supabase = await createSupabaseRouteHandlerClient();
 
   try {
-    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
 
-    if (sessionError) throw new Error(sessionError.message);
-    if (!session) {
+    if (userError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -254,11 +246,11 @@ export async function DELETE(
     const { data: householdUser, error: membershipError } = await supabase
       .from('household_members')
       .select('user_id, household_id, role')
-      .eq('user_id', session.user.id)
+      .eq('user_id', user.id)
       .eq('household_id', expense.household_id)
       .single();
 
-    const isCreator = expense.created_by === session.user.id || expense.paid_by === session.user.id;
+    const isCreator = expense.created_by === user.id || expense.paid_by === user.id;
     const isAdmin = householdUser?.role === 'admin';
 
     if (!isCreator && !isAdmin) {

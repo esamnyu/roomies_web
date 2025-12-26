@@ -1,8 +1,6 @@
 // src/app/api/expenses/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
-import { createServerClient, type CookieOptions } from '@supabase/ssr';
+import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { generateUUID } from '@/lib/utils'; // Assuming you have a UUID generator
 
@@ -14,23 +12,16 @@ async function createSupabaseRouteHandlerClient() {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
-        get(name: string) {
-          return cookieStore.get(name)?.value;
+        getAll() {
+          return cookieStore.getAll();
         },
-        set(name: string, value: string, options: CookieOptions) {
+        setAll(cookiesToSet) {
           try {
-            cookieStore.set({ name, value, ...options });
+            cookiesToSet.forEach(({ name, value, options }) => {
+              cookieStore.set(name, value, options);
+            });
           } catch (error) {
-            // Handle potential errors during cookie setting (e.g., read-only headers)
-            console.error("Error setting cookie:", name, error);
-          }
-        },
-        remove(name: string, options: CookieOptions) {
-          try {
-            cookieStore.set({ name, value: '', ...options });
-          } catch (error) {
-            // Handle potential errors during cookie removal
-            console.error("Error removing cookie:", name, error);
+            // Handle potential errors during cookie setting
           }
         },
       },
@@ -43,14 +34,15 @@ async function createSupabaseRouteHandlerClient() {
 export async function GET(request: NextRequest) {
   const supabase = await createSupabaseRouteHandlerClient();
   try {
-    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    // Use getUser() instead of getSession() for better security
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
 
-    if (sessionError) throw new Error(sessionError.message); // Or handle more gracefully
-    if (!session) {
+    if (userError || !user) {
+      console.error('Auth error:', userError?.message || 'No user found');
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const userId = session.user.id;
+    const userId = user.id;
 
     // Get household ID from query params (accept both camelCase and snake_case)
     const { searchParams } = new URL(request.url);
@@ -110,13 +102,14 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const supabase = await createSupabaseRouteHandlerClient();
   try {
-    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    // Use getUser() instead of getSession() for better security
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
 
-    if (sessionError) throw new Error(sessionError.message);
-    if (!session) {
+    if (userError || !user) {
+      console.error('Auth error:', userError?.message || 'No user found');
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    const userId = session.user.id;
+    const userId = user.id;
 
     const body = await request.json();
     const {
