@@ -12,7 +12,8 @@ import {
   createExpense,
   updateExpense,
   deleteExpense,
-  updatePaymentStatus
+  updatePaymentStatus,
+  ExpenseServiceError
 } from '@/lib/services/expenseService';
 
 // Define types matching the props expected by ExpenseForm
@@ -114,22 +115,63 @@ export default function ExpensesPage() {
 
       try {
         // Fetch expenses and members in parallel
+        console.log('[ExpensesPage] Starting parallel fetch for household:', householdId);
+
         const [expensesData, membersData] = await Promise.all([
-          fetchExpenses(householdId),
-          fetchHouseholdMembers(householdId)
+          fetchExpenses(householdId).then(data => {
+            console.log('[ExpensesPage] Expenses fetched:', data?.length ?? 'null');
+            return data;
+          }),
+          fetchHouseholdMembers(householdId).then(data => {
+            console.log('[ExpensesPage] Members fetched:', data?.length ?? 'null');
+            return data;
+          })
         ]);
 
-        // Convert dates from strings to Date objects
+        console.log('[ExpensesPage] Both fetches completed');
+
+        // Convert dates from strings to Date objects and ensure arrays exist
         const formattedExpenses = expensesData.map((expense: any) => ({
           ...expense,
-          date: new Date(expense.date)
+          date: new Date(expense.date),
+          splits: expense.splits || [],
+          payments: expense.payments || []
         }));
 
         setExpenses(formattedExpenses);
-        setMembers(membersData);
+
+        // Map API response to Member interface
+        // IMPORTANT: Use userId (profiles.id) as the member id, NOT the household_members.id
+        console.log('[ExpensesPage] Raw members data:', JSON.stringify(membersData, null, 2));
+
+        const formattedMembers = (membersData || []).map((member: any) => {
+          if (!member.userId) {
+            console.warn('[ExpensesPage] Member missing userId:', member);
+          }
+          return {
+            id: member.userId || member.id,  // Fallback to id if userId missing
+            name: member.name || 'Unknown',
+            avatar: member.avatar
+          };
+        }).filter((m: any) => m.id); // Filter out any without an id
+
+        console.log('[ExpensesPage] Formatted members:', formattedMembers);
+        setMembers(formattedMembers);
       } catch (err) {
-        console.error('Error loading data:', err);
-        setError('Failed to load data. Please try again.');
+        const errorMessage = err instanceof ExpenseServiceError
+          ? `${err.message} (${err.code})`
+          : 'Failed to load data';
+
+        console.error('[ExpensesPage] Error loading data:', {
+          error: err instanceof ExpenseServiceError ? {
+            message: err.message,
+            status: err.status,
+            code: err.code,
+            details: err.details,
+          } : err,
+        });
+
+        setError(`${errorMessage}. Please try again.`);
       } finally {
         setIsLoading(false);
       }
@@ -205,24 +247,28 @@ export default function ExpensesPage() {
       if (currentExpense && submittedExpenseData.id) {
         // Update existing expense
         const updatedExpense = await updateExpense(submittedExpenseData.id, expenseData);
-        
+
         // Update local state
         setExpenses(expenses.map(expense =>
           expense.id === updatedExpense.id ? {
             ...updatedExpense,
-            date: new Date(updatedExpense.date)
+            date: new Date(updatedExpense.date),
+            splits: updatedExpense.splits || [],
+            payments: updatedExpense.payments || []
           } : expense
         ));
-        
+
         console.log("Updated expense:", updatedExpense.id);
       } else {
         // Create new expense
         const newExpense = await createExpense(expenseData);
-        
-        // Add to local state
+
+        // Add to local state with defaults for arrays
         setExpenses([...expenses, {
           ...newExpense,
-          date: new Date(newExpense.date)
+          date: new Date(newExpense.date),
+          splits: newExpense.splits || [],
+          payments: newExpense.payments || []
         }]);
         
         console.log("Added expense:", newExpense.id);
@@ -231,9 +277,32 @@ export default function ExpensesPage() {
       setShowExpenseForm(false);
       setCurrentExpense(null);
     } catch (err) {
-      console.error('Error saving expense:', err);
-      // You could set an error state and show to user
-      alert('Failed to save expense. Please try again.');
+      const isServiceError = err instanceof ExpenseServiceError;
+      const errorMessage = isServiceError ? err.message : 'An unexpected error occurred';
+      const httpStatus = isServiceError ? err.status : undefined;
+
+      console.error('[ExpensesPage] Error saving expense:', {
+        operation: currentExpense ? 'update' : 'create',
+        error: isServiceError ? {
+          message: err.message,
+          status: err.status,
+          code: err.code,
+          details: err.details,
+        } : err,
+        expenseData: {
+          title: submittedExpenseData.title,
+          amount: submittedExpenseData.amount,
+          householdId: submittedExpenseData.householdId,
+        },
+      });
+
+      // Show user-friendly message with context
+      const statusHint = httpStatus === 401 ? ' (Please log in again)'
+        : httpStatus === 403 ? ' (Permission denied)'
+        : httpStatus === 400 ? ' (Invalid data)'
+        : '';
+
+      alert(`Failed to save expense: ${errorMessage}${statusHint}`);
     }
   };
 
@@ -244,16 +313,28 @@ export default function ExpensesPage() {
 
   const handleDeleteExpense = async (expenseId: string | undefined) => {
     if (!expenseId) return;
-    
+
     try {
       await deleteExpense(expenseId);
-      
+
       // Update local state
       setExpenses(expenses.filter(expense => expense.id !== expenseId));
-      console.log("Deleted expense:", expenseId);
+      console.log('[ExpensesPage] Expense deleted:', expenseId);
     } catch (err) {
-      console.error('Error deleting expense:', err);
-      alert('Failed to delete expense. Please try again.');
+      const isServiceError = err instanceof ExpenseServiceError;
+      const errorMessage = isServiceError ? err.message : 'An unexpected error occurred';
+
+      console.error('[ExpensesPage] Error deleting expense:', {
+        expenseId,
+        error: isServiceError ? {
+          message: err.message,
+          status: err.status,
+          code: err.code,
+          details: err.details,
+        } : err,
+      });
+
+      alert(`Failed to delete expense: ${errorMessage}`);
     }
   };
 
@@ -265,7 +346,7 @@ export default function ExpensesPage() {
       const expense = expenses.find(e => e.id === expenseId);
       if (!expense) return;
       
-      const payment = expense.payments.find(p => p.userId === userId);
+      const payment = expense.payments?.find(p => p.userId === userId);
       if (!payment || !payment.id) return;
       
       // Update the payment status through API
@@ -276,7 +357,7 @@ export default function ExpensesPage() {
         if (expense.id === expenseId) {
           return {
             ...expense,
-            payments: expense.payments.map(payment =>
+            payments: (expense.payments || []).map(payment =>
               payment.userId === userId ? { ...payment, status: 'COMPLETED' as const } : payment
             )
           };
@@ -284,10 +365,23 @@ export default function ExpensesPage() {
         return expense;
       }));
       
-      console.log(`Marked payment as paid for user ${userId} in expense ${expenseId}`);
+      console.log('[ExpensesPage] Payment marked as paid:', { userId, expenseId });
     } catch (err) {
-      console.error('Error updating payment status:', err);
-      alert('Failed to mark payment as paid. Please try again.');
+      const isServiceError = err instanceof ExpenseServiceError;
+      const errorMessage = isServiceError ? err.message : 'An unexpected error occurred';
+
+      console.error('[ExpensesPage] Error updating payment status:', {
+        expenseId,
+        userId,
+        error: isServiceError ? {
+          message: err.message,
+          status: err.status,
+          code: err.code,
+          details: err.details,
+        } : err,
+      });
+
+      alert(`Failed to mark payment as paid: ${errorMessage}`);
     }
   };
 
@@ -336,8 +430,8 @@ export default function ExpensesPage() {
                 <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                    {expenses.map((expense) => {
                      const isCreator = expense.creatorId === currentUserId;
-                     const userSplit = expense.splits.find(split => split.userId === currentUserId);
-                     const userPaymentEntry = expense.payments.find(payment => payment.userId === currentUserId);
+                     const userSplit = expense.splits?.find(split => split.userId === currentUserId);
+                     const userPaymentEntry = expense.payments?.find(payment => payment.userId === currentUserId);
                      const needsToPay = !isCreator && userPaymentEntry?.status === 'PENDING';
                      const isSettled = isCreator || userPaymentEntry?.status === 'COMPLETED';
 
